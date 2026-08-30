@@ -1,5 +1,9 @@
 # solidlens
 
+<p align="center">
+  <img src="docs/images/hero.png" alt="A cyan torus, violet block, and coral cylinder rendered by solidlens against a deep navy background" width="900">
+</p>
+
 `solidlens` is a pure-Go, headless raster renderer for triangle meshes. It
 loads STL, 3MF, and OBJ files, accepts `*decad.Mesh` through `TriangleSource`,
 and renders a configured scene to an `image.RGBA` or PNG stream.
@@ -30,3 +34,15 @@ Build a `Scene` with `Camera`, `Model`, `Material`, `DirectionalLight`,
 coordinates are treated as millimetres.
 
 The [examples](examples) package contains a tested end-to-end render.
+
+## Gallery
+
+The gallery uses triangle meshes built in Go and rendered with `RenderPNG`.
+It shows directional and point lighting, per-model materials, perspective
+camera placement, and a configured background.
+
+| Mechanical forms | Primitive forms |
+|---|---|
+| ![A cyan wheel with raised spokes beside a gold faceted cylinder and dome](docs/images/mechanical.png) | ![A pink sphere, green block, and blue faceted cone](docs/images/forms.png) |
+
+Run `go run ./internal/cmd/genimages` to regenerate the checked-in images.
