@@ -85,8 +85,9 @@ func heroScene() (solidlens.Scene, error) {
 		solidlens.Model{Mesh: block, Material: solidlens.Matte(solidlens.RGB(0.47, 0.21, 0.93))},
 		solidlens.Model{Mesh: cylinder, Material: solidlens.Matte(solidlens.RGB(1, 0.31, 0.22))},
 	)
-	scene.Camera.Target = solidlens.Vec{Z: 1.75}
-	scene.Camera.FOV = 43
+	scene.Camera.Position = solidlens.Vec{X: 0.35, Y: -6.2, Z: 2.45}
+	scene.Camera.Target = solidlens.Vec{Z: 2.2}
+	scene.Camera.FOV = 46
 	return scene, nil
 }
 
