@@ -9,19 +9,29 @@ import (
 	"path/filepath"
 
 	"github.com/lestrrat-3d/solidlens"
+	tmf "github.com/lestrrat-go/3mf"
+	"github.com/lestrrat-go/stl"
 )
 
 const outputDir = "docs/images"
+const modelDir = "docs/models"
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--models" {
+		if err := writeModelAssets(); err != nil {
+			fmt.Fprintf(os.Stderr, "build model assets: %s\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "create image directory: %s\n", err)
 		os.Exit(1)
 	}
 	for _, render := range []galleryRender{
-		{name: "hero.png", scene: heroScene()},
-		{name: "mechanical.png", scene: mechanicalScene()},
-		{name: "forms.png", scene: formsScene()},
+		{name: "hero.png", scene: heroScene},
+		{name: "mechanical.png", scene: mechanicalScene},
+		{name: "forms.png", scene: formsScene},
 	} {
 		if err := render.write(); err != nil {
 			fmt.Fprintf(os.Stderr, "render %s: %s\n", render.name, err)
@@ -32,15 +42,19 @@ func main() {
 
 type galleryRender struct {
 	name  string
-	scene solidlens.Scene
+	scene func() (solidlens.Scene, error)
 }
 
 func (r galleryRender) write() error {
+	scene, err := r.scene()
+	if err != nil {
+		return err
+	}
 	file, err := os.Create(filepath.Join(outputDir, r.name)) //nolint:gosec
 	if err != nil {
 		return err
 	}
-	err = solidlens.RenderPNG(context.Background(), file, r.scene, solidlens.Settings{Width: 1440, Height: 810})
+	err = solidlens.RenderPNG(context.Background(), file, scene, solidlens.Settings{Width: 1440, Height: 810})
 	closeErr := file.Close()
 	if err != nil {
 		return err
@@ -48,35 +62,67 @@ func (r galleryRender) write() error {
 	return closeErr
 }
 
-func heroScene() solidlens.Scene {
-	return studioScene(
-		solidlens.Model{Mesh: torus(solidlens.Vec{X: -2.25, Z: 1.3}, 0.95, 0.29, 36, 14), Material: solidlens.Matte(solidlens.RGB(0.04, 0.78, 0.88))},
-		solidlens.Model{Mesh: boxMesh(solidlens.Vec{Z: 1.1}, solidlens.Vec{X: 1.44, Y: 1.44, Z: 2.04}), Material: solidlens.Matte(solidlens.RGB(0.47, 0.21, 0.93))},
-		solidlens.Model{Mesh: cylinder(solidlens.Vec{X: 2.3}, 0.88, 2.5, 10), Material: solidlens.Matte(solidlens.RGB(1, 0.31, 0.22))},
+func heroScene() (solidlens.Scene, error) {
+	text, err := readModel("solidlens.stl")
+	if err != nil {
+		return solidlens.Scene{}, err
+	}
+	torus, err := readModel("hero-torus.stl")
+	if err != nil {
+		return solidlens.Scene{}, err
+	}
+	block, err := readModel("hero-block.stl")
+	if err != nil {
+		return solidlens.Scene{}, err
+	}
+	cylinder, err := readModel("hero-cylinder.stl")
+	if err != nil {
+		return solidlens.Scene{}, err
+	}
+	scene := studioScene(
+		solidlens.Model{Mesh: text, Material: solidlens.Matte(solidlens.RGB(0.78, 0.9, 1))},
+		solidlens.Model{Mesh: torus, Material: solidlens.Matte(solidlens.RGB(0.04, 0.78, 0.88))},
+		solidlens.Model{Mesh: block, Material: solidlens.Matte(solidlens.RGB(0.47, 0.21, 0.93))},
+		solidlens.Model{Mesh: cylinder, Material: solidlens.Matte(solidlens.RGB(1, 0.31, 0.22))},
 	)
+	scene.Camera.Target = solidlens.Vec{Z: 1.75}
+	scene.Camera.FOV = 43
+	return scene, nil
 }
 
-func mechanicalScene() solidlens.Scene {
-	gear := torus(solidlens.Vec{X: -1.55, Z: 0.85}, 0.95, 0.25, 24, 10)
-	spokes := newBuilder()
-	for i := 0; i < 8; i++ {
-		angle := 2 * math.Pi * float64(i) / 8
-		spokes.box(solidlens.Vec{X: -1.55 + 0.64*math.Cos(angle), Y: 0.64 * math.Sin(angle), Z: 0.85}, solidlens.Vec{X: 0.28, Y: 0.28, Z: 0.52})
+func mechanicalScene() (solidlens.Scene, error) {
+	blue, err := readModel("mechanical-blue.stl")
+	if err != nil {
+		return solidlens.Scene{}, err
+	}
+	gold, err := readModel("mechanical-gold.3mf")
+	if err != nil {
+		return solidlens.Scene{}, err
 	}
 	return studioScene(
-		solidlens.Model{Mesh: gear, Material: solidlens.Matte(solidlens.RGB(0.05, 0.68, 0.94))},
-		solidlens.Model{Mesh: spokes.mesh(), Material: solidlens.Matte(solidlens.RGB(0.05, 0.68, 0.94))},
-		solidlens.Model{Mesh: cylinder(solidlens.Vec{X: 1.55}, 0.92, 2.25, 12), Material: solidlens.Matte(solidlens.RGB(0.95, 0.64, 0.06))},
-		solidlens.Model{Mesh: sphere(solidlens.Vec{X: 1.55, Z: 2.36}, 0.7, 24, 12), Material: solidlens.Matte(solidlens.RGB(0.95, 0.64, 0.06))},
-	)
+		solidlens.Model{Mesh: blue, Material: solidlens.Matte(solidlens.RGB(0.05, 0.68, 0.94))},
+		solidlens.Model{Mesh: gold, Material: solidlens.Matte(solidlens.RGB(0.95, 0.64, 0.06))},
+	), nil
 }
 
-func formsScene() solidlens.Scene {
+func formsScene() (solidlens.Scene, error) {
+	pink, err := readModel("forms-pink.stl")
+	if err != nil {
+		return solidlens.Scene{}, err
+	}
+	green, err := readModel("forms-green.stl")
+	if err != nil {
+		return solidlens.Scene{}, err
+	}
+	blue, err := readModel("forms-blue.stl")
+	if err != nil {
+		return solidlens.Scene{}, err
+	}
 	return studioScene(
-		solidlens.Model{Mesh: sphere(solidlens.Vec{X: -2, Z: 1.1}, 1.1, 32, 18), Material: solidlens.Matte(solidlens.RGB(0.96, 0.23, 0.54))},
-		solidlens.Model{Mesh: boxMesh(solidlens.Vec{Z: 0.95}, solidlens.Vec{X: 1.57, Y: 1.57, Z: 1.67}), Material: solidlens.Matte(solidlens.RGB(0.17, 0.76, 0.54))},
-		solidlens.Model{Mesh: cone(solidlens.Vec{X: 2.1}, 1.0, 2.4, 8), Material: solidlens.Matte(solidlens.RGB(0.33, 0.44, 0.98))},
-	)
+		solidlens.Model{Mesh: pink, Material: solidlens.Matte(solidlens.RGB(0.96, 0.23, 0.54))},
+		solidlens.Model{Mesh: green, Material: solidlens.Matte(solidlens.RGB(0.17, 0.76, 0.54))},
+		solidlens.Model{Mesh: blue, Material: solidlens.Matte(solidlens.RGB(0.33, 0.44, 0.98))},
+	), nil
 }
 
 func studioScene(models ...solidlens.Model) solidlens.Scene {
@@ -243,3 +289,161 @@ func boxMesh(center, size solidlens.Vec) *solidlens.Mesh {
 }
 
 func solidlensVec(x, y, z float64) solidlens.Vec { return solidlens.Vec{X: x, Y: y, Z: z} }
+
+func readModel(name string) (*solidlens.Mesh, error) {
+	file, err := os.Open(filepath.Join(modelDir, name)) //nolint:gosec
+	if err != nil {
+		return nil, fmt.Errorf("open model %q: %w", name, err)
+	}
+	mesh, err := solidlens.ReadMesh(name, file)
+	closeErr := file.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return mesh, nil
+}
+
+func writeModelAssets() error {
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		return err
+	}
+	if err := writeSTL("solidlens.stl", wordMesh("Solidlens")); err != nil {
+		return err
+	}
+	if err := writeSTL("hero-torus.stl", torus(solidlens.Vec{X: -2.25, Z: 1.3}, 0.95, 0.29, 36, 14)); err != nil {
+		return err
+	}
+	if err := writeSTL("hero-block.stl", boxMesh(solidlens.Vec{Z: 1.1}, solidlens.Vec{X: 1.44, Y: 1.44, Z: 2.04})); err != nil {
+		return err
+	}
+	if err := writeSTL("hero-cylinder.stl", cylinder(solidlens.Vec{X: 2.3}, 0.88, 2.5, 10)); err != nil {
+		return err
+	}
+
+	spokes := newBuilder()
+	for i := 0; i < 8; i++ {
+		angle := 2 * math.Pi * float64(i) / 8
+		spokes.box(
+			solidlens.Vec{X: -1.55 + 0.64*math.Cos(angle), Y: 0.64 * math.Sin(angle), Z: 0.85},
+			solidlens.Vec{X: 0.28, Y: 0.28, Z: 0.52},
+		)
+	}
+	if err := writeSTL("mechanical-blue.stl", mergeMeshes(
+		torus(solidlens.Vec{X: -1.55, Z: 0.85}, 0.95, 0.25, 24, 10),
+		spokes.mesh(),
+	)); err != nil {
+		return err
+	}
+	if err := write3MF("mechanical-gold.3mf", mergeMeshes(
+		cylinder(solidlens.Vec{X: 1.55}, 0.92, 2.25, 12),
+		sphere(solidlens.Vec{X: 1.55, Z: 2.36}, 0.7, 24, 12),
+	)); err != nil {
+		return err
+	}
+	if err := writeSTL("forms-pink.stl", sphere(solidlens.Vec{X: -2, Z: 1.1}, 1.1, 32, 18)); err != nil {
+		return err
+	}
+	if err := writeSTL("forms-green.stl", boxMesh(solidlens.Vec{Z: 0.95}, solidlens.Vec{X: 1.57, Y: 1.57, Z: 1.67})); err != nil {
+		return err
+	}
+	return writeSTL("forms-blue.stl", cone(solidlens.Vec{X: 2.1}, 1.0, 2.4, 8))
+}
+
+func writeSTL(name string, mesh *solidlens.Mesh) error {
+	file, err := os.Create(filepath.Join(modelDir, name)) //nolint:gosec
+	if err != nil {
+		return err
+	}
+	vertices := mesh.Vertices()
+	triangles := make([]stl.Triangle, 0, len(mesh.Triangles()))
+	for _, triangle := range mesh.Triangles() {
+		facet := stl.Triangle{}
+		for index, vertexIndex := range triangle {
+			vertex := vertices[vertexIndex]
+			facet.Vertices[index] = stl.Vec3{float32(vertex.X), float32(vertex.Y), float32(vertex.Z)}
+		}
+		triangles = append(triangles, facet)
+	}
+	err = stl.Encode(file, &stl.Solid{Name: "solidlens", Triangles: triangles}, stl.FormatASCII)
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+func write3MF(name string, mesh *solidlens.Mesh) error {
+	vertices := mesh.Vertices()
+	modelVertices := make([]tmf.Vertex, len(vertices))
+	for i, vertex := range vertices {
+		modelVertices[i] = tmf.Vertex{X: vertex.X, Y: vertex.Y, Z: vertex.Z}
+	}
+	triangles := mesh.Triangles()
+	modelTriangles := make([]tmf.Triangle, len(triangles))
+	for i, triangle := range triangles {
+		modelTriangles[i] = tmf.Triangle{V1: uint32(triangle[0]), V2: uint32(triangle[1]), V3: uint32(triangle[2])}
+	}
+	geometry := tmf.NewMesh(tmf.WithVertices(modelVertices), tmf.WithTriangles(modelTriangles))
+	object := tmf.NewObject(tmf.WithObjectID(1), tmf.WithObjectName("solidlens gallery model"), tmf.WithMesh(geometry))
+	model := tmf.NewModel(tmf.WithUnit(tmf.UnitMillimeter), tmf.WithObject(object), tmf.WithBuildItem(tmf.NewBuildItem(tmf.WithObjectRef(object))))
+	pkg := tmf.NewPackage(tmf.WithModel(model))
+	file, err := os.Create(filepath.Join(modelDir, name)) //nolint:gosec
+	if err != nil {
+		return err
+	}
+	_, err = pkg.WriteTo(file)
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+func mergeMeshes(meshes ...*solidlens.Mesh) *solidlens.Mesh {
+	b := newBuilder()
+	for _, mesh := range meshes {
+		b.add(mesh.Vertices(), mesh.Triangles())
+	}
+	return b.mesh()
+}
+
+func wordMesh(text string) *solidlens.Mesh {
+	patterns := map[rune][]string{
+		'S': {"01110", "10000", "10000", "01110", "00001", "00001", "11110"},
+		'o': {"00000", "00000", "01110", "10001", "10001", "10001", "01110"},
+		'l': {"01000", "01000", "01000", "01000", "01000", "01000", "00110"},
+		'i': {"00000", "00100", "00000", "01100", "00100", "00100", "01110"},
+		'd': {"00001", "00001", "01101", "10011", "10001", "10011", "01101"},
+		'e': {"00000", "00000", "01110", "10001", "11111", "10000", "01110"},
+		'n': {"00000", "00000", "10110", "11001", "10001", "10001", "10001"},
+		's': {"00000", "00000", "01111", "10000", "01110", "00001", "11110"},
+	}
+	const cell = 0.16
+	const gap = 0.08
+	width := 0.0
+	for _, letter := range text {
+		width += float64(len(patterns[letter][0]))*cell + gap
+	}
+	width -= gap
+	b := newBuilder()
+	x := -width / 2
+	for _, letter := range text {
+		glyph := patterns[letter]
+		for row, pixels := range glyph {
+			for column, pixel := range pixels {
+				if pixel != '1' {
+					continue
+				}
+				b.box(
+					solidlens.Vec{X: x + (float64(column)+0.5)*cell, Y: 0.1, Z: 4.2 - (float64(row)+0.5)*cell},
+					solidlens.Vec{X: cell * 1.03, Y: 0.26, Z: cell * 1.03},
+				)
+			}
+		}
+		x += float64(len(glyph[0]))*cell + gap
+	}
+	return b.mesh()
+}

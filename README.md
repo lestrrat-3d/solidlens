@@ -45,4 +45,7 @@ camera placement, and a configured background.
 |---|---|
 | ![A cyan wheel with raised spokes beside a gold faceted cylinder and dome](docs/images/mechanical.png) | ![A pink sphere, green block, and blue faceted cone](docs/images/forms.png) |
 
-Run `go run ./internal/cmd/genimages` to regenerate the checked-in images.
+The committed STL and 3MF files in [`docs/models`](docs/models) are the scene
+sources. Run `go run ./internal/cmd/genimages` to regenerate the checked-in
+images from those files. Run `go run ./internal/cmd/genimages --models` only
+when intentionally rebuilding the model assets.
