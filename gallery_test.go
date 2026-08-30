@@ -28,9 +28,9 @@ func TestGalleryImages(t *testing.T) {
 func TestGalleryModels(t *testing.T) {
 	for _, name := range []string{
 		"solidlens.stl",
-		"hero-torus.stl",
-		"hero-block.stl",
-		"hero-cylinder.stl",
+		"hero-ball.stl",
+		"hero-pyramid.stl",
+		"hero-cube.stl",
 		"mechanical-blue.stl",
 		"mechanical-gold.3mf",
 		"forms-pink.stl",

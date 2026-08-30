@@ -67,27 +67,27 @@ func heroScene() (solidlens.Scene, error) {
 	if err != nil {
 		return solidlens.Scene{}, err
 	}
-	torus, err := readModel("hero-torus.stl")
+	ball, err := readModel("hero-ball.stl")
 	if err != nil {
 		return solidlens.Scene{}, err
 	}
-	block, err := readModel("hero-block.stl")
+	pyramid, err := readModel("hero-pyramid.stl")
 	if err != nil {
 		return solidlens.Scene{}, err
 	}
-	cylinder, err := readModel("hero-cylinder.stl")
+	cube, err := readModel("hero-cube.stl")
 	if err != nil {
 		return solidlens.Scene{}, err
 	}
 	scene := studioScene(
 		solidlens.Model{Mesh: text, Material: solidlens.Matte(solidlens.RGB(0.78, 0.9, 1))},
-		solidlens.Model{Mesh: torus, Material: solidlens.Matte(solidlens.RGB(0.04, 0.78, 0.88))},
-		solidlens.Model{Mesh: block, Material: solidlens.Matte(solidlens.RGB(0.47, 0.21, 0.93))},
-		solidlens.Model{Mesh: cylinder, Material: solidlens.Matte(solidlens.RGB(1, 0.31, 0.22))},
+		solidlens.Model{Mesh: ball, Material: solidlens.Matte(solidlens.RGB(0.04, 0.78, 0.88))},
+		solidlens.Model{Mesh: pyramid, Material: solidlens.Matte(solidlens.RGB(0.47, 0.21, 0.93))},
+		solidlens.Model{Mesh: cube, Material: solidlens.Matte(solidlens.RGB(1, 0.31, 0.22))},
 	)
-	scene.Camera.Position = solidlens.Vec{X: 0.35, Y: -6.2, Z: 2.45}
-	scene.Camera.Target = solidlens.Vec{Z: 2.2}
-	scene.Camera.FOV = 46
+	scene.Camera.Position = solidlens.Vec{X: -0.5, Y: -7, Z: 2.5}
+	scene.Camera.Target = solidlens.Vec{X: 0.25, Z: 2.1}
+	scene.Camera.FOV = 50
 	return scene, nil
 }
 
@@ -231,6 +231,21 @@ func cone(center solidlens.Vec, radius, height float64, segments int) *solidlens
 	return b.mesh()
 }
 
+func pyramid(center solidlens.Vec, width, height float64) *solidlens.Mesh {
+	half := width / 2
+	b := newBuilder()
+	b.add([]solidlens.Vec{
+		center.Add(solidlensVec(-half, -half, 0)),
+		center.Add(solidlensVec(half, -half, 0)),
+		center.Add(solidlensVec(half, half, 0)),
+		center.Add(solidlensVec(-half, half, 0)),
+		center.Add(solidlensVec(0, 0, height)),
+	}, [][3]int{
+		{0, 2, 1}, {0, 3, 2}, {0, 1, 4}, {1, 2, 4}, {2, 3, 4}, {3, 0, 4},
+	})
+	return b.mesh()
+}
+
 func sphere(center solidlens.Vec, radius float64, slices, stacks int) *solidlens.Mesh {
 	b := newBuilder()
 	vertices := make([]solidlens.Vec, 0, (slices+1)*(stacks+1))
@@ -314,13 +329,13 @@ func writeModelAssets() error {
 	if err := writeSTL("solidlens.stl", wordMesh("Solidlens")); err != nil {
 		return err
 	}
-	if err := writeSTL("hero-torus.stl", torus(solidlens.Vec{X: -2.25, Z: 1.3}, 0.95, 0.29, 36, 14)); err != nil {
+	if err := writeSTL("hero-ball.stl", sphere(solidlens.Vec{X: -2.15, Z: 1}, 1, 32, 18)); err != nil {
 		return err
 	}
-	if err := writeSTL("hero-block.stl", boxMesh(solidlens.Vec{Z: 1.1}, solidlens.Vec{X: 1.44, Y: 1.44, Z: 2.04})); err != nil {
+	if err := writeSTL("hero-pyramid.stl", pyramid(solidlens.Vec{}, 2, 2)); err != nil {
 		return err
 	}
-	if err := writeSTL("hero-cylinder.stl", cylinder(solidlens.Vec{X: 2.3}, 0.88, 2.5, 10)); err != nil {
+	if err := writeSTL("hero-cube.stl", boxMesh(solidlens.Vec{X: 2.15, Z: 1}, solidlens.Vec{X: 2, Y: 2, Z: 2})); err != nil {
 		return err
 	}
 
