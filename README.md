@@ -49,3 +49,20 @@ The committed STL and 3MF files in [`docs/models`](docs/models) are the scene
 sources. Run `go run ./internal/cmd/genimages` to regenerate the checked-in
 images from those files. Run `go run ./internal/cmd/genimages --models` only
 when intentionally rebuilding the model assets.
+
+## License
+
+This project is **source-available**, and is licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE).
+
+* **Noncommercial use is free.** Individuals, hobby and personal projects,
+  research, education, nonprofits, and government may use, modify, and
+  redistribute it at no cost, subject to the license terms.
+* **Commercial / business use requires a separate license.** Any use by or for
+  a business, or for commercial advantage, is not permitted under the
+  noncommercial license. To obtain a commercial license, reach out on Bluesky
+  at [@lestrrat.bsky.social](https://bsky.app/profile/lestrrat.bsky.social).
+
+### Contributions
+
+This repository does **not** accept external pull requests.
