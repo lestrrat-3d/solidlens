@@ -85,8 +85,8 @@ func heroScene() (solidlens.Scene, error) {
 		solidlens.Model{Mesh: pyramid, Material: solidlens.Matte(solidlens.RGB(0.47, 0.21, 0.93))},
 		solidlens.Model{Mesh: cube, Material: solidlens.Matte(solidlens.RGB(1, 0.31, 0.22))},
 	)
-	scene.Camera.Position = solidlens.Vec{X: -0.3, Y: -6.9, Z: 2.45}
-	scene.Camera.Target = solidlens.Vec{Z: 2.05}
+	scene.Camera.Position = solidlens.Vec{X: -0.24, Y: -5.5, Z: 2.5}
+	scene.Camera.Target = solidlens.Vec{Z: 2.25}
 	scene.Camera.FOV = 52
 	return scene, nil
 }
@@ -329,13 +329,13 @@ func writeModelAssets() error {
 	if err := writeSTL("solidlens.stl", wordMesh("Solidlens")); err != nil {
 		return err
 	}
-	if err := writeSTL("hero-ball.stl", sphere(solidlens.Vec{X: -1.8, Z: 0.8}, 0.8, 32, 18)); err != nil {
+	if err := writeSTL("hero-ball.stl", sphere(solidlens.Vec{X: -1.8, Z: 1.55}, 0.8, 32, 18)); err != nil {
 		return err
 	}
-	if err := writeSTL("hero-pyramid.stl", pyramid(solidlens.Vec{}, 1.6, 1.6)); err != nil {
+	if err := writeSTL("hero-pyramid.stl", pyramid(solidlens.Vec{Z: 0.75}, 1.6, 1.6)); err != nil {
 		return err
 	}
-	if err := writeSTL("hero-cube.stl", boxMesh(solidlens.Vec{X: 1.8, Z: 0.8}, solidlens.Vec{X: 1.6, Y: 1.6, Z: 1.6})); err != nil {
+	if err := writeSTL("hero-cube.stl", boxMesh(solidlens.Vec{X: 1.8, Z: 1.55}, solidlens.Vec{X: 1.6, Y: 1.6, Z: 1.6})); err != nil {
 		return err
 	}
 
