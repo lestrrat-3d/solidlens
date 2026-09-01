@@ -81,9 +81,9 @@ func heroScene() (solidlens.Scene, error) {
 	}
 	scene := studioScene(
 		solidlens.Model{Mesh: text, Material: solidlens.Matte(solidlens.RGB(0.78, 0.9, 1))},
-		solidlens.Model{Mesh: ball, Material: solidlens.Matte(solidlens.RGB(0.04, 0.78, 0.88))},
-		solidlens.Model{Mesh: pyramid, Material: solidlens.Matte(solidlens.RGB(0.47, 0.21, 0.93))},
-		solidlens.Model{Mesh: cube, Material: solidlens.Matte(solidlens.RGB(1, 0.31, 0.22))},
+		outlined(solidlens.Model{Mesh: ball, Material: solidlens.Matte(solidlens.RGB(0.04, 0.78, 0.88))}),
+		outlined(solidlens.Model{Mesh: pyramid, Material: solidlens.Matte(solidlens.RGB(0.47, 0.21, 0.93))}),
+		outlined(solidlens.Model{Mesh: cube, Material: solidlens.Matte(solidlens.RGB(1, 0.31, 0.22))}),
 	)
 	scene.Camera.Position = solidlens.Vec{X: -0.24, Y: -5.5, Z: 2.5}
 	scene.Camera.Target = solidlens.Vec{Z: 2.25}
@@ -101,8 +101,8 @@ func mechanicalScene() (solidlens.Scene, error) {
 		return solidlens.Scene{}, err
 	}
 	return studioScene(
-		solidlens.Model{Mesh: blue, Material: solidlens.Matte(solidlens.RGB(0.05, 0.68, 0.94))},
-		solidlens.Model{Mesh: gold, Material: solidlens.Matte(solidlens.RGB(0.95, 0.64, 0.06))},
+		outlined(solidlens.Model{Mesh: blue, Material: solidlens.Matte(solidlens.RGB(0.05, 0.68, 0.94))}),
+		outlined(solidlens.Model{Mesh: gold, Material: solidlens.Matte(solidlens.RGB(0.95, 0.64, 0.06))}),
 	), nil
 }
 
@@ -120,10 +120,31 @@ func formsScene() (solidlens.Scene, error) {
 		return solidlens.Scene{}, err
 	}
 	return studioScene(
-		solidlens.Model{Mesh: pink, Material: solidlens.Matte(solidlens.RGB(0.96, 0.23, 0.54))},
-		solidlens.Model{Mesh: green, Material: solidlens.Matte(solidlens.RGB(0.17, 0.76, 0.54))},
-		solidlens.Model{Mesh: blue, Material: solidlens.Matte(solidlens.RGB(0.33, 0.44, 0.98))},
+		outlined(solidlens.Model{Mesh: pink, Material: solidlens.Matte(solidlens.RGB(0.96, 0.23, 0.54))}),
+		outlined(solidlens.Model{Mesh: green, Material: solidlens.Matte(solidlens.RGB(0.17, 0.76, 0.54))}),
+		outlined(solidlens.Model{Mesh: blue, Material: solidlens.Matte(solidlens.RGB(0.33, 0.44, 0.98))}),
 	), nil
+}
+
+// outlined enables edge lines on a model. The line color is a lightened form
+// of the material so that it reads against both the lit surface and the dark
+// background.
+func outlined(model solidlens.Model) solidlens.Model {
+	model.Edges = solidlens.Edges{
+		Enabled: true,
+		Color:   lighten(model.Material.Color, 0.6),
+		Width:   1.5,
+	}
+	return model
+}
+
+func lighten(c solidlens.Color, amount float64) solidlens.Color {
+	return solidlens.Color{
+		R: c.R + (1-c.R)*amount,
+		G: c.G + (1-c.G)*amount,
+		B: c.B + (1-c.B)*amount,
+		A: 1,
+	}
 }
 
 func studioScene(models ...solidlens.Model) solidlens.Scene {

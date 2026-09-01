@@ -33,13 +33,25 @@ Build a `Scene` with `Camera`, `Model`, `Material`, `DirectionalLight`,
 `PointLight`, and `Background`, then call `Render` or `RenderPNG`. Mesh
 coordinates are treated as millimetres.
 
+Set `Model.Edges` to draw lines along a model's edges. `Edges` carries
+`Enabled`, `Color`, and a `Width` in pixels, and it is off by default.
+`Outline` fills in the usual values for a given color. An edge is drawn when
+it borders the mesh, when the two faces meeting there differ by at least
+`CreaseAngle` degrees, or when it lies on the model's silhouette, so a
+tessellated curve keeps its outline without turning into a grid of facets. A
+negative `CreaseAngle` draws every shared edge, which gives a full wireframe.
+Edges are drawn after every model's surface, so they stay hidden behind
+nearer bodies.
+
 The [examples](examples) package contains a tested end-to-end render.
 
 ## Gallery
 
 The gallery uses triangle meshes built in Go and rendered with `RenderPNG`.
-It shows directional and point lighting, per-model materials, perspective
-camera placement, and a configured background.
+It shows directional and point lighting, per-model materials, edge lines,
+perspective camera placement, and a configured background. The faceted bodies
+show their facet edges, while the sphere keeps only its silhouette, because
+its neighbouring faces stay under the default crease angle.
 
 | Mechanical forms | Primitive forms |
 |---|---|

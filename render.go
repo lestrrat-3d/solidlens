@@ -37,6 +37,7 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 	for index := range depth {
 		depth[index] = math.Inf(1)
 	}
+	var segments []segment
 	for modelIndex, model := range scene.Models {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -69,6 +70,23 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 			}
 			rasterize(image, depth, projected, shade)
 		}
+		if model.Edges.Enabled {
+			edges, err := model.Edges.normalized()
+			if err != nil {
+				return nil, fmt.Errorf("solidlens: model %d: %w", modelIndex, err)
+			}
+			segments = append(segments, collectEdges(vertices, triangles, camera.Position, edges)...)
+		}
+	}
+	// Edges are drawn last so that they test against the finished depth
+	// buffer and stay hidden behind the surfaces of every model.
+	for index, segment := range segments {
+		if index%1024 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		drawSegment(image, depth, view, segment)
 	}
 	return image, nil
 }
@@ -132,20 +150,118 @@ func newView(camera Camera, settings Settings) (view, error) {
 func (v view) projectTriangle(vertices [3]Vec) ([3]screenVertex, bool) {
 	var projected [3]screenVertex
 	for i, vertex := range vertices {
-		relative := vertex.Sub(v.position)
-		z := relative.Dot(v.forward)
-		if z < v.near || z > v.far {
+		if z := v.depthOf(vertex); z < v.near || z > v.far {
 			return projected, false
 		}
-		x := relative.Dot(v.right) * v.focal / (z * v.aspect)
-		y := relative.Dot(v.up) * v.focal / z
-		projected[i] = screenVertex{
-			x: (x + 1) * float64(v.width) / 2,
-			y: (1 - y) * float64(v.height) / 2,
-			z: z,
-		}
+		projected[i] = v.projectPoint(vertex)
 	}
 	return projected, true
+}
+
+// depthOf returns the camera-space distance of point along the view direction.
+func (v view) depthOf(point Vec) float64 { return point.Sub(v.position).Dot(v.forward) }
+
+// projectPoint maps a world point to pixel coordinates. The caller is
+// responsible for keeping the point inside the clipping range.
+func (v view) projectPoint(point Vec) screenVertex {
+	relative := point.Sub(v.position)
+	z := relative.Dot(v.forward)
+	x := relative.Dot(v.right) * v.focal / (z * v.aspect)
+	y := relative.Dot(v.up) * v.focal / z
+	return screenVertex{
+		x: (x + 1) * float64(v.width) / 2,
+		y: (1 - y) * float64(v.height) / 2,
+		z: z,
+	}
+}
+
+// clipSegment shortens a world-space segment to the camera clipping range. It
+// reports false when the segment lies entirely outside that range.
+func (v view) clipSegment(a, b Vec) (Vec, Vec, bool) {
+	depthA, depthB := v.depthOf(a), v.depthOf(b)
+	if (depthA < v.near && depthB < v.near) || (depthA > v.far && depthB > v.far) {
+		return a, b, false
+	}
+	if depthA < v.near {
+		a = lerpVec(a, b, (v.near-depthA)/(depthB-depthA))
+	} else if depthB < v.near {
+		b = lerpVec(b, a, (v.near-depthB)/(depthA-depthB))
+	}
+	if math.IsInf(v.far, 1) {
+		return a, b, true
+	}
+	depthA, depthB = v.depthOf(a), v.depthOf(b)
+	if depthA > v.far {
+		a = lerpVec(a, b, (v.far-depthA)/(depthB-depthA))
+	} else if depthB > v.far {
+		b = lerpVec(b, a, (v.far-depthB)/(depthA-depthB))
+	}
+	return a, b, true
+}
+
+func lerpVec(a, b Vec, t float64) Vec { return a.Add(b.Sub(a).Scale(t)) }
+
+// edgeDepthBias lets an edge line win the depth test against the surfaces it
+// borders, which share its depth to within rounding error.
+const edgeDepthBias = 1e-3
+
+func drawSegment(image *image.RGBA, depth []float64, v view, s segment) {
+	a, b, ok := v.clipSegment(s.a, s.b)
+	if !ok {
+		return
+	}
+	drawLine(image, depth, v.projectPoint(a), v.projectPoint(b), s.style.Color, s.style.Width)
+}
+
+// drawLine draws a depth-tested line of the given pixel width. Coverage of the
+// half pixel at the line border is blended, so diagonals stay readable.
+func drawLine(image *image.RGBA, depth []float64, a, b screenVertex, lineColor Color, width float64) {
+	if !finite(a.x) || !finite(a.y) || !finite(a.z) || !finite(b.x) || !finite(b.y) || !finite(b.z) {
+		return
+	}
+	stride := image.Bounds().Dx()
+	extent := width/2 + 0.5
+	minX := int(clamp(math.Floor(math.Min(a.x, b.x)-extent), 0, float64(stride-1)))
+	maxX := int(clamp(math.Ceil(math.Max(a.x, b.x)+extent), 0, float64(stride-1)))
+	minY := int(clamp(math.Floor(math.Min(a.y, b.y)-extent), 0, float64(image.Bounds().Dy()-1)))
+	maxY := int(clamp(math.Ceil(math.Max(a.y, b.y)+extent), 0, float64(image.Bounds().Dy()-1)))
+	deltaX, deltaY := b.x-a.x, b.y-a.y
+	lengthSquared := deltaX*deltaX + deltaY*deltaY
+	for y := minY; y <= maxY; y++ {
+		for x := minX; x <= maxX; x++ {
+			px, py := float64(x)+0.5, float64(y)+0.5
+			position := 0.0
+			if lengthSquared > 0 {
+				position = clamp(((px-a.x)*deltaX+(py-a.y)*deltaY)/lengthSquared, 0, 1)
+			}
+			coverage := clamp(extent-math.Hypot(px-(a.x+position*deltaX), py-(a.y+position*deltaY)), 0, 1)
+			if coverage <= 0 {
+				continue
+			}
+			z := a.z + position*(b.z-a.z)
+			if z > depth[y*stride+x]*(1+edgeDepthBias) {
+				continue
+			}
+			blend(image, x, y, lineColor, coverage)
+		}
+	}
+}
+
+// blend composites a color over one pixel without touching the depth buffer.
+func blend(image *image.RGBA, x, y int, over Color, coverage float64) {
+	alpha := clamp(over.A, 0, 1) * coverage
+	if alpha <= 0 {
+		return
+	}
+	source := over.NRGBA()
+	destination := image.RGBAAt(x, y)
+	inverse := 1 - alpha
+	image.SetRGBA(x, y, color.RGBA{
+		R: uint8(float64(source.R)*alpha + float64(destination.R)*inverse + 0.5),
+		G: uint8(float64(source.G)*alpha + float64(destination.G)*inverse + 0.5),
+		B: uint8(float64(source.B)*alpha + float64(destination.B)*inverse + 0.5),
+		A: uint8(255*alpha + float64(destination.A)*inverse + 0.5),
+	})
 }
 
 func shadeTriangle(scene Scene, material Material, normal, position Vec) Color {
