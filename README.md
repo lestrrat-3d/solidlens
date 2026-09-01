@@ -48,8 +48,10 @@ The [examples](examples) package contains a tested end-to-end render.
 ## Gallery
 
 The gallery uses triangle meshes built in Go and rendered with `RenderPNG`.
-It shows directional and point lighting, per-model materials, perspective
-camera placement, and a configured background.
+It shows directional and point lighting, per-model materials, edge lines,
+perspective camera placement, and a configured background. The faceted bodies
+show their facet edges, while the sphere keeps only its silhouette, because
+its neighbouring faces stay under the default crease angle.
 
 | Mechanical forms | Primitive forms |
 |---|---|
