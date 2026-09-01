@@ -36,10 +36,12 @@ type Material struct {
 // Matte returns a diffuse material with a small ambient contribution.
 func Matte(c Color) Material { return Material{Color: c, Ambient: 0.12} }
 
-// Model places a mesh in a scene. Mesh coordinates are in world space.
+// Model places a mesh in a scene. Mesh coordinates are in world space. Edges
+// draws lines along the model's edges and is off by default.
 type Model struct {
 	Mesh     TriangleSource
 	Material Material
+	Edges    Edges
 }
 
 // Camera describes a perspective camera looking from Position toward Target.
