@@ -238,14 +238,14 @@ func apply3MFTransform(m tmf.Matrix, v Vec) Vec {
 // compose3MFTransform returns the transform that first applies a and then b.
 func compose3MFTransform(a, b tmf.Matrix) tmf.Matrix {
 	var combined tmf.Matrix
-	for row := 0; row < 3; row++ {
-		for column := 0; column < 3; column++ {
+	for row := range 3 {
+		for column := range 3 {
 			combined[row*3+column] = a[row*3]*b[column] +
 				a[row*3+1]*b[3+column] +
 				a[row*3+2]*b[6+column]
 		}
 	}
-	for column := 0; column < 3; column++ {
+	for column := range 3 {
 		combined[9+column] = a[9]*b[column] + a[10]*b[3+column] + a[11]*b[6+column] + b[9+column]
 	}
 	return combined

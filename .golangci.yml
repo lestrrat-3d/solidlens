@@ -1,16 +1,12 @@
 # Adapted from the lestrrat-go house config (helium/jwx): `default: all` with a
-# curated disable list. The house baseline is carried over as-is. Only two
-# linters beyond it fire on this tree and they are marked below; the rest of
-# the older repositories' "pending cleanup" list is already clean here.
+# curated disable list. The house baseline is carried over as-is. Only one
+# linter beyond it fires on this tree and it is marked below; the rest of the
+# older repositories' "pending cleanup" list is already clean here.
 version: "2"
 linters:
   default: all
   disable:
     # --- pending cleanup: re-enable once the findings are addressed ---
-    # intrange and modernize both flag the same 14 counting loops in
-    # import.go and internal/cmd/genimages that could use `for i := range n`.
-    - intrange
-    - modernize
     # unparam: clamp in scene.go is only ever called with low = 0. It reads as
     # a general helper, so the finding is style, not a defect.
     - unparam
