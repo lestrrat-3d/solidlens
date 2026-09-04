@@ -5,7 +5,7 @@ go 1.26.8
 require (
 	github.com/lestrrat-3d/r3 v0.0.0-20260904065918-3f991d319cc3
 	github.com/lestrrat-go/3mf v0.0.0-20260519040824-7ad46c6b825b
-	github.com/lestrrat-go/stl v0.0.0-20260519041412-3811116ebc02
+	github.com/lestrrat-go/stl v0.0.0-20260904080308-f2792ffa3582
 	github.com/stretchr/testify v1.12.1
 )
 
