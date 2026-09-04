@@ -37,7 +37,7 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 	for index := range depth {
 		depth[index] = math.Inf(1)
 	}
-	var segments []segment
+	var edgeGroups []edgeGroup
 	for modelIndex, model := range scene.Models {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -75,18 +75,31 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 			if err != nil {
 				return nil, fmt.Errorf("solidlens: model %d: %w", modelIndex, err)
 			}
-			segments = append(segments, collectEdges(vertices, triangles, camera.Position, edges)...)
+			edgeGroups = append(edgeGroups, edgeGroup{
+				style:    edges,
+				segments: collectEdges(vertices, triangles, camera.Position, edges),
+			})
 		}
 	}
 	// Edges are drawn last so that they test against the finished depth
-	// buffer and stay hidden behind the surfaces of every model.
-	for index, segment := range segments {
-		if index%1024 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
+	// buffer and stay hidden behind the surfaces of every model. Each model's
+	// lines are gathered into a coverage buffer and composited in one pass, so
+	// a pixel that several of its lines cross is drawn once at the strongest
+	// coverage rather than blended once per line.
+	if len(edgeGroups) > 0 {
+		canvas := newEdgeCanvas(settings.Width, settings.Height)
+		for _, group := range edgeGroups {
+			canvas.reset()
+			for index, segment := range group.segments {
+				if index%1024 == 0 {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
+				}
+				accumulateSegment(canvas, depth, view, segment)
 			}
+			canvas.composite(image, group.style.Color)
 		}
-		drawSegment(image, depth, view, segment)
 	}
 	return image, nil
 }
@@ -205,26 +218,85 @@ func lerpVec(a, b Vec, t float64) Vec { return a.Add(b.Sub(a).Scale(t)) }
 // borders, which share its depth to within rounding error.
 const edgeDepthBias = 1e-3
 
-func drawSegment(image *image.RGBA, depth []float64, v view, s segment) {
+// edgeGroup is one model's edge lines. They share a style, so they can be
+// accumulated together and composited in a single pass.
+type edgeGroup struct {
+	style    Edges
+	segments []segment
+}
+
+// edgeCanvas accumulates the coverage of one model's edge lines. A pixel that
+// several lines cross keeps the strongest coverage rather than being blended
+// once per line, which is what used to darken the seams where lines meet.
+// Keeping the strongest also makes the result independent of the order the
+// lines arrive in.
+type edgeCanvas struct {
+	coverage       []float64
+	stride, height int
+	// Bounds of the pixels touched since the last reset, inclusive. The
+	// range is empty while maxX is below minX.
+	minX, minY, maxX, maxY int
+}
+
+func newEdgeCanvas(width, height int) *edgeCanvas {
+	canvas := &edgeCanvas{coverage: make([]float64, width*height), stride: width, height: height}
+	canvas.reset()
+	return canvas
+}
+
+// reset clears the coverage left by the previous model. Only the pixels that
+// model touched are cleared, so a second model costs its own area rather than
+// the whole frame.
+func (c *edgeCanvas) reset() {
+	for y := c.minY; y <= c.maxY; y++ {
+		clear(c.coverage[y*c.stride+c.minX : y*c.stride+c.maxX+1])
+	}
+	c.minX, c.minY = c.stride, c.height
+	c.maxX, c.maxY = -1, -1
+}
+
+func (c *edgeCanvas) add(x, y int, coverage float64) {
+	index := y*c.stride + x
+	if coverage <= c.coverage[index] {
+		return
+	}
+	c.coverage[index] = coverage
+	c.minX, c.maxX = min(c.minX, x), max(c.maxX, x)
+	c.minY, c.maxY = min(c.minY, y), max(c.maxY, y)
+}
+
+// composite draws the accumulated coverage in lineColor, one blend per pixel.
+func (c *edgeCanvas) composite(image *image.RGBA, lineColor Color) {
+	for y := c.minY; y <= c.maxY; y++ {
+		for x := c.minX; x <= c.maxX; x++ {
+			if coverage := c.coverage[y*c.stride+x]; coverage > 0 {
+				blend(image, x, y, lineColor, coverage)
+			}
+		}
+	}
+}
+
+func accumulateSegment(canvas *edgeCanvas, depth []float64, v view, s segment) {
 	a, b, ok := v.clipSegment(s.a, s.b)
 	if !ok {
 		return
 	}
-	drawLine(image, depth, v.projectPoint(a), v.projectPoint(b), s.style.Color, s.style.Width)
+	accumulateLine(canvas, depth, v.projectPoint(a), v.projectPoint(b), s.style.Width)
 }
 
-// drawLine draws a depth-tested line of the given pixel width. Coverage of the
-// half pixel at the line border is blended, so diagonals stay readable.
-func drawLine(image *image.RGBA, depth []float64, a, b screenVertex, lineColor Color, width float64) {
+// accumulateLine records the coverage of a depth-tested line of the given
+// pixel width. Coverage of the half pixel at the line border is fractional, so
+// diagonals stay readable.
+func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, width float64) {
 	if !finite(a.x) || !finite(a.y) || !finite(a.z) || !finite(b.x) || !finite(b.y) || !finite(b.z) {
 		return
 	}
-	stride := image.Bounds().Dx()
+	stride := canvas.stride
 	extent := width/2 + 0.5
 	minX := int(clamp(math.Floor(math.Min(a.x, b.x)-extent), 0, float64(stride-1)))
 	maxX := int(clamp(math.Ceil(math.Max(a.x, b.x)+extent), 0, float64(stride-1)))
-	minY := int(clamp(math.Floor(math.Min(a.y, b.y)-extent), 0, float64(image.Bounds().Dy()-1)))
-	maxY := int(clamp(math.Ceil(math.Max(a.y, b.y)+extent), 0, float64(image.Bounds().Dy()-1)))
+	minY := int(clamp(math.Floor(math.Min(a.y, b.y)-extent), 0, float64(canvas.height-1)))
+	maxY := int(clamp(math.Ceil(math.Max(a.y, b.y)+extent), 0, float64(canvas.height-1)))
 	deltaX, deltaY := b.x-a.x, b.y-a.y
 	lengthSquared := deltaX*deltaX + deltaY*deltaY
 	for y := minY; y <= maxY; y++ {
@@ -242,7 +314,7 @@ func drawLine(image *image.RGBA, depth []float64, a, b screenVertex, lineColor C
 			if z > depth[y*stride+x]*(1+edgeDepthBias) {
 				continue
 			}
-			blend(image, x, y, lineColor, coverage)
+			canvas.add(x, y, coverage)
 		}
 	}
 }
