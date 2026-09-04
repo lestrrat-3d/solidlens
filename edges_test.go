@@ -1,6 +1,7 @@
 package solidlens_test
 
 import (
+	"bytes"
 	"image"
 	"image/color"
 	"testing"
@@ -179,6 +180,21 @@ func TestEdges(t *testing.T) {
 		img, err := solidlens.Render(t.Context(), scene, settings)
 		require.NoError(t, err)
 		require.Greater(t, countRed(img), 0)
+	})
+
+	t.Run("repeated renders of one scene produce identical pixels", func(t *testing.T) {
+		// A negative crease angle draws every triangle edge, so the cube's
+		// lines cross at each corner. Overlapping lines blend, so an unstable
+		// edge order shows up as differing pixels. Pixels are compared rather
+		// than encoded PNGs because the encoder is a pure function of them.
+		scene := cubeScene(t, solidlens.Edges{Enabled: true, Color: red, CreaseAngle: -1})
+		first, err := solidlens.Render(t.Context(), scene, settings)
+		require.NoError(t, err)
+		for run := 1; run < 8; run++ {
+			again, err := solidlens.Render(t.Context(), scene, settings)
+			require.NoError(t, err)
+			require.Truef(t, bytes.Equal(first.Pix, again.Pix), "render %d differs from the first", run)
+		}
 	})
 
 	t.Run("invalid settings are rejected", func(t *testing.T) {
