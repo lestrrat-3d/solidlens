@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Tier 1: lint runs first. The heavier tiers below gate on it via `needs`,
+  # so a lint failure short-circuits the pipeline before any tests run.
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.12.2
+          args: --timeout=5m
+
+      - name: Run go vet
+        run: go vet ./...
+
+  # Tier 2: tests, only after lint succeeds. Race detector on Linux; the other
+  # OSes run the same suite without it, purely for cross-platform coverage.
+  #
+  # The renderer is deterministic for a given toolchain and platform, not
+  # across them, so nothing here diffs rendered output against the committed
+  # docs/images. The tests compare renders only within one run.
+  test:
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            race: "-race"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test ${{ matrix.race }} -timeout 10m ./...
+
+  # Tier 2: verify the tree is tidy.
+  verify:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Tidy dependencies
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+  # Tier 2: vulnerability scan of the module and its dependencies.
+  govulncheck:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.4.0 ./...
