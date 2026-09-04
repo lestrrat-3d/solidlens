@@ -100,6 +100,12 @@ type edgeRecord struct {
 // whose normal is undefined are ignored, and so is any edge they contribute.
 func collectEdges(vertices []Vec, triangles [][3]int, eye Vec, style Edges) []segment {
 	records := make(map[edgeKey]*edgeRecord)
+	// ordered holds the same records in first-encounter order. Ranging over
+	// records instead would take Go's randomised map order, and overlapping
+	// edge lines blend, so the drawn image would differ between calls. A
+	// closed mesh shares every edge between two faces, so it has half of the
+	// three edges per triangle; an open one appends past that.
+	ordered := make([]*edgeRecord, 0, len(triangles)*3/2)
 	for _, triangle := range triangles {
 		corners := [3]Vec{vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]}
 		normal, ok := corners[1].Sub(corners[0]).Cross(corners[2].Sub(corners[0])).Normalize()
@@ -113,6 +119,7 @@ func collectEdges(vertices []Vec, triangles [][3]int, eye Vec, style Edges) []se
 			if !exists {
 				record = &edgeRecord{a: a, b: b, point: corners[0]}
 				records[key] = record
+				ordered = append(ordered, record)
 			}
 			if record.faces < len(record.normals) {
 				record.normals[record.faces] = normal
@@ -121,8 +128,8 @@ func collectEdges(vertices []Vec, triangles [][3]int, eye Vec, style Edges) []se
 		}
 	}
 	creaseCos := math.Cos(style.CreaseAngle * math.Pi / 180)
-	segments := make([]segment, 0, len(records))
-	for _, record := range records {
+	segments := make([]segment, 0, len(ordered))
+	for _, record := range ordered {
 		if !drawEdge(record, eye, style.CreaseAngle, creaseCos) {
 			continue
 		}
