@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+
+  # This repository has no workflows yet. The entry is here so that actions are
+  # covered from the day the first one lands.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Grouped into one pull request. Some actions, codeql-action among them,
+    # ship several steps as separate dependencies that share one release SHA
+    # and break if they move apart.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
