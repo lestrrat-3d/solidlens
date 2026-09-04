@@ -197,6 +197,29 @@ func TestEdges(t *testing.T) {
 		}
 	})
 
+	t.Run("crossing lines composite once per pixel", func(t *testing.T) {
+		// A half transparent black line can darken a pixel to at most half of
+		// what the surface under it was. Blending that pixel a second time
+		// would take it to a quarter, so this catches lines that composite
+		// once per line rather than once per pixel. A negative crease angle
+		// draws the full wireframe, whose lines cross at every cube corner.
+		plain, err := solidlens.Render(t.Context(), cubeScene(t, solidlens.Edges{}), settings)
+		require.NoError(t, err)
+		lined, err := solidlens.Render(t.Context(), cubeScene(t, solidlens.Edges{
+			Enabled:     true,
+			Color:       solidlens.RGBA(0, 0, 0, 0.5),
+			CreaseAngle: -1,
+		}), settings)
+		require.NoError(t, err)
+		for y := range settings.Height {
+			for x := range settings.Width {
+				under, over := plain.RGBAAt(x, y), lined.RGBAAt(x, y)
+				require.GreaterOrEqualf(t, int(over.G), int(under.G)/2-1,
+					"pixel (%d,%d) is %v over a surface of %v, darker than one composite allows", x, y, over, under)
+			}
+		}
+	})
+
 	t.Run("invalid settings are rejected", func(t *testing.T) {
 		for name, edges := range map[string]solidlens.Edges{
 			"negative width":       {Enabled: true, Width: -1},
