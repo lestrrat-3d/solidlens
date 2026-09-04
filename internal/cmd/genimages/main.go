@@ -215,7 +215,7 @@ func (b *builder) box(center, size solidlens.Vec) {
 func cylinder(center solidlens.Vec, radius, height float64, segments int) *solidlens.Mesh {
 	b := newBuilder()
 	vertices := make([]solidlens.Vec, 0, segments*2+2)
-	for i := 0; i < segments; i++ {
+	for i := range segments {
 		angle := 2 * math.Pi * float64(i) / float64(segments)
 		x, y := radius*math.Cos(angle), radius*math.Sin(angle)
 		vertices = append(vertices, center.Add(solidlensVec(x, y, 0)), center.Add(solidlensVec(x, y, height)))
@@ -223,7 +223,7 @@ func cylinder(center solidlens.Vec, radius, height float64, segments int) *solid
 	vertices = append(vertices, center, center.Add(solidlensVec(0, 0, height)))
 	bottom, top := segments*2, segments*2+1
 	triangles := make([][3]int, 0, segments*4)
-	for i := 0; i < segments; i++ {
+	for i := range segments {
 		next := (i + 1) % segments
 		triangles = append(triangles,
 			[3]int{i * 2, next * 2, i*2 + 1}, [3]int{i*2 + 1, next * 2, next*2 + 1},
@@ -237,14 +237,14 @@ func cylinder(center solidlens.Vec, radius, height float64, segments int) *solid
 func cone(center solidlens.Vec, radius, height float64, segments int) *solidlens.Mesh {
 	b := newBuilder()
 	vertices := make([]solidlens.Vec, 0, segments+2)
-	for i := 0; i < segments; i++ {
+	for i := range segments {
 		angle := 2 * math.Pi * float64(i) / float64(segments)
 		vertices = append(vertices, center.Add(solidlensVec(radius*math.Cos(angle), radius*math.Sin(angle), 0)))
 	}
 	vertices = append(vertices, center, center.Add(solidlensVec(0, 0, height)))
 	bottom, peak := segments, segments+1
 	triangles := make([][3]int, 0, segments*2)
-	for i := 0; i < segments; i++ {
+	for i := range segments {
 		next := (i + 1) % segments
 		triangles = append(triangles, [3]int{bottom, next, i}, [3]int{i, next, peak})
 	}
@@ -280,8 +280,8 @@ func sphere(center solidlens.Vec, radius float64, slices, stacks int) *solidlens
 		}
 	}
 	triangles := make([][3]int, 0, slices*stacks*2)
-	for stack := 0; stack < stacks; stack++ {
-		for slice := 0; slice < slices; slice++ {
+	for stack := range stacks {
+		for slice := range slices {
 			a := stack*(slices+1) + slice
 			b := a + slices + 1
 			triangles = append(triangles, [3]int{a, b, a + 1}, [3]int{a + 1, b, b + 1})
@@ -294,9 +294,9 @@ func sphere(center solidlens.Vec, radius float64, slices, stacks int) *solidlens
 func torus(center solidlens.Vec, radius, tube float64, majorSegments, minorSegments int) *solidlens.Mesh {
 	b := newBuilder()
 	vertices := make([]solidlens.Vec, 0, majorSegments*minorSegments)
-	for major := 0; major < majorSegments; major++ {
+	for major := range majorSegments {
 		a := 2 * math.Pi * float64(major) / float64(majorSegments)
-		for minor := 0; minor < minorSegments; minor++ {
+		for minor := range minorSegments {
 			c := 2 * math.Pi * float64(minor) / float64(minorSegments)
 			vertices = append(vertices, center.Add(solidlensVec(
 				(radius+tube*math.Cos(c))*math.Cos(a), (radius+tube*math.Cos(c))*math.Sin(a), tube*math.Sin(c),
@@ -304,8 +304,8 @@ func torus(center solidlens.Vec, radius, tube float64, majorSegments, minorSegme
 		}
 	}
 	triangles := make([][3]int, 0, majorSegments*minorSegments*2)
-	for major := 0; major < majorSegments; major++ {
-		for minor := 0; minor < minorSegments; minor++ {
+	for major := range majorSegments {
+		for minor := range minorSegments {
 			nextMajor := (major + 1) % majorSegments
 			nextMinor := (minor + 1) % minorSegments
 			a := major*minorSegments + minor
@@ -361,7 +361,7 @@ func writeModelAssets() error {
 	}
 
 	spokes := newBuilder()
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		angle := 2 * math.Pi * float64(i) / 8
 		spokes.box(
 			solidlens.Vec{X: -1.55 + 0.64*math.Cos(angle), Y: 0.64 * math.Sin(angle), Z: 0.85},
