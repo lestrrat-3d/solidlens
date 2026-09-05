@@ -10,7 +10,7 @@ require (
 )
 
 require (
-	github.com/lestrrat-3d/units v0.0.0-20260904060501-aa72af3789a1 // indirect
+	github.com/lestrrat-3d/units v0.0.0-20260904073908-07332345ff86 // indirect
 	github.com/lestrrat-go/helium v0.8.0 // indirect
 	github.com/lestrrat-go/option/v3 v3.0.0-alpha1 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
