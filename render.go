@@ -45,8 +45,15 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 		if model.Mesh == nil {
 			return nil, fmt.Errorf("solidlens: model %d has no mesh", modelIndex)
 		}
-		if !finiteColor(model.Material.Color) || !finite(model.Material.Ambient) {
+		if !model.Material.valid() {
 			return nil, fmt.Errorf("solidlens: model %d has an invalid material", modelIndex)
+		}
+		back := model.Material
+		if model.BackMaterial != nil {
+			if !model.BackMaterial.valid() {
+				return nil, fmt.Errorf("solidlens: model %d has an invalid back material", modelIndex)
+			}
+			back = *model.BackMaterial
 		}
 		vertices := model.Mesh.Vertices()
 		triangles := model.Mesh.Triangles()
@@ -63,7 +70,16 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 			if !ok {
 				continue
 			}
-			shade := shadeTriangle(scene, model.Material, normal, world[0])
+			// A triangle seen from behind is shaded as its back side, with the
+			// normal turned toward the camera. On a closed mesh these faces
+			// are hidden by nearer ones, and on an open mesh they are the
+			// visible inner side.
+			material := model.Material
+			if normal.Dot(camera.Position.Sub(world[0])) < 0 {
+				normal = normal.Scale(-1)
+				material = back
+			}
+			shade := shadeTriangle(scene, material, normal, world[0])
 			projected, visible := view.projectTriangle(world)
 			if !visible {
 				continue
