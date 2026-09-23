@@ -36,12 +36,21 @@ type Material struct {
 // Matte returns a diffuse material with a small ambient contribution.
 func Matte(c Color) Material { return Material{Color: c, Ambient: 0.12} }
 
+func (m Material) valid() bool { return finiteColor(m.Color) && finite(m.Ambient) }
+
 // Model places a mesh in a scene. Mesh coordinates are in world space. Edges
 // draws lines along the model's edges and is off by default.
+//
+// Both sides of every triangle are lit, so an open mesh such as a decad sheet
+// body shows its inner side as well as its outer one. The front of a triangle
+// is the side its vertices wind counter-clockwise on. BackMaterial, when set,
+// shades the other side, which makes a sheet's orientation visible. A nil
+// BackMaterial shades both sides with Material.
 type Model struct {
-	Mesh     TriangleSource
-	Material Material
-	Edges    Edges
+	Mesh         TriangleSource
+	Material     Material
+	BackMaterial *Material
+	Edges        Edges
 }
 
 // Camera describes a perspective camera looking from Position toward Target.

@@ -43,6 +43,15 @@ negative `CreaseAngle` draws every shared edge, which gives a full wireframe.
 Edges are drawn after every model's surface, so they stay hidden behind
 nearer bodies.
 
+Open meshes render with both sides lit. A decad sheet body, the result of
+`WithSurfaceResult`, tessellates to such a mesh, and passing its `*decad.Mesh`
+as `Model.Mesh` shows its inner walls as well as its outer ones. The front of
+a triangle is the side its vertices wind counter-clockwise on, which for a
+sheet is decad's positive side. Set `Model.BackMaterial` to shade the other
+side in a different material and make the sheet's orientation visible. When
+it is nil, both sides use `Model.Material`. Edge lines are drawn along a
+sheet's free edges, because those edges border the mesh.
+
 The [examples](examples) package contains a tested end-to-end render.
 
 ## Gallery
