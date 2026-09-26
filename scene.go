@@ -139,7 +139,57 @@ func (c Camera) normalized() (Camera, error) {
 	return c, nil
 }
 
+// srgbThresholds maps each channel value to the first representable linear
+// input that rounds to it. The boundaries are computed once using the exact
+// transfer function so the render loop only needs comparisons.
+var srgbThresholds = func() [256]float64 {
+	var thresholds [256]float64
+	for channel := 1; channel < len(thresholds); channel++ {
+		low, high := uint64(0), math.Float64bits(1)
+		for low+1 < high {
+			middle := low + (high-low)/2
+			if linearToSRGBExact(math.Float64frombits(middle)) >= uint8(channel) {
+				high = middle
+			} else {
+				low = middle
+			}
+		}
+		thresholds[channel] = math.Float64frombits(high)
+	}
+	return thresholds
+}()
+
+const srgbBucketCount = 4096
+
+var srgbBuckets = func() [srgbBucketCount]uint8 {
+	var buckets [srgbBucketCount]uint8
+	channel := uint8(0)
+	for index := range buckets {
+		value := float64(index) / srgbBucketCount
+		for channel < 255 && value >= srgbThresholds[channel+1] {
+			channel++
+		}
+		buckets[index] = channel
+	}
+	return buckets
+}()
+
 func linearToSRGB(v float64) uint8 {
+	v = clamp(v, 0, 1)
+	if math.IsNaN(v) {
+		return linearToSRGBExact(v)
+	}
+	if v >= 1 {
+		return 255
+	}
+	channel := srgbBuckets[int(v*srgbBucketCount)]
+	if channel < 255 && v >= srgbThresholds[channel+1] {
+		channel++
+	}
+	return channel
+}
+
+func linearToSRGBExact(v float64) uint8 {
 	v = clamp(v, 0, 1)
 	if v <= 0.0031308 {
 		return uint8(v*12.92*255 + 0.5)

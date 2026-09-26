@@ -64,6 +64,16 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 		} else {
 			vertices, triangles = model.Mesh.Vertices(), model.Mesh.Triangles()
 		}
+		var projectedVertices []screenVertex
+		var projectedReady []bool
+		if len(triangles) >= len(vertices) && len(vertices) > 0 {
+			projectedVertices = make([]screenVertex, len(vertices))
+			projectedReady = make([]bool, len(vertices))
+		}
+		var edgeNormals []Vec
+		if model.Edges.Enabled {
+			edgeNormals = make([]Vec, len(triangles))
+		}
 		for triangleIndex, triangle := range triangles {
 			if triangle[0] < 0 || triangle[1] < 0 || triangle[2] < 0 ||
 				triangle[0] >= len(vertices) || triangle[1] >= len(vertices) || triangle[2] >= len(vertices) {
@@ -77,6 +87,9 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 			if !ok {
 				continue
 			}
+			if edgeNormals != nil {
+				edgeNormals[triangleIndex] = normal
+			}
 			// A triangle seen from behind is shaded as its back side, with the
 			// normal turned toward the camera. On a closed mesh these faces
 			// are hidden by nearer ones, and on an open mesh they are the
@@ -87,7 +100,23 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 				material = back
 			}
 			shade := shadeTriangle(lights, material, normal, world[0])
-			projected, visible := view.projectTriangle(world)
+			var projected [3]screenVertex
+			var visible bool
+			if projectedVertices == nil {
+				projected, visible = view.projectTriangle(world)
+			} else {
+				visible = true
+				for corner, index := range triangle {
+					if !projectedReady[index] {
+						projectedVertices[index] = view.projectClippedPoint(vertices[index])
+						projectedReady[index] = true
+					}
+					projected[corner] = projectedVertices[index]
+					if projected[corner].z < view.near || projected[corner].z > view.far {
+						visible = false
+					}
+				}
+			}
 			if !visible {
 				continue
 			}
@@ -99,8 +128,9 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 				return nil, fmt.Errorf("solidlens: model %d: %w", modelIndex, err)
 			}
 			edgeGroups = append(edgeGroups, edgeGroup{
-				style:    edges,
-				segments: collectEdges(vertices, triangles, camera.Position, edges),
+				style:     edges,
+				segments:  collectEdges(vertices, triangles, edgeNormals, camera.Position, edges),
+				projected: projectedVertices,
 			})
 		}
 	}
@@ -119,7 +149,7 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 						return nil, err
 					}
 				}
-				accumulateSegment(canvas, depth, view, segment)
+				accumulateSegment(canvas, depth, view, segment, group.projected, group.style.Width)
 			}
 			canvas.composite(image, group.style.Color)
 		}
@@ -194,6 +224,21 @@ func (v view) projectTriangle(vertices [3]Vec) ([3]screenVertex, bool) {
 	return projected, true
 }
 
+func (v view) projectClippedPoint(point Vec) screenVertex {
+	relative := point.Sub(v.position)
+	z := relative.Dot(v.forward)
+	if z < v.near || z > v.far {
+		return screenVertex{z: z}
+	}
+	x := relative.Dot(v.right) * v.focal / (z * v.aspect)
+	y := relative.Dot(v.up) * v.focal / z
+	return screenVertex{
+		x: (x + 1) * float64(v.width) / 2,
+		y: (1 - y) * float64(v.height) / 2,
+		z: z,
+	}
+}
+
 // depthOf returns the camera-space distance of point along the view direction.
 func (v view) depthOf(point Vec) float64 { return point.Sub(v.position).Dot(v.forward) }
 
@@ -244,8 +289,9 @@ const edgeDepthBias = 1e-3
 // edgeGroup is one model's edge lines. They share a style, so they can be
 // accumulated together and composited in a single pass.
 type edgeGroup struct {
-	style    Edges
-	segments []segment
+	style     Edges
+	segments  []segment
+	projected []screenVertex
 }
 
 // edgeCanvas accumulates the coverage of one model's edge lines. A pixel that
@@ -284,8 +330,18 @@ func (c *edgeCanvas) add(x, y int, coverage float64) {
 		return
 	}
 	c.coverage[index] = coverage
-	c.minX, c.maxX = min(c.minX, x), max(c.maxX, x)
-	c.minY, c.maxY = min(c.minY, y), max(c.maxY, y)
+	if x < c.minX {
+		c.minX = x
+	}
+	if x > c.maxX {
+		c.maxX = x
+	}
+	if y < c.minY {
+		c.minY = y
+	}
+	if y > c.maxY {
+		c.maxY = y
+	}
 }
 
 // composite draws the accumulated coverage in lineColor, one blend per pixel.
@@ -301,12 +357,19 @@ func (c *edgeCanvas) composite(image *image.RGBA, lineColor Color) {
 	}
 }
 
-func accumulateSegment(canvas *edgeCanvas, depth []float64, v view, s segment) {
+func accumulateSegment(canvas *edgeCanvas, depth []float64, v view, s segment, projected []screenVertex, width float64) {
+	if projected != nil {
+		aProjected, bProjected := projected[s.aIndex], projected[s.bIndex]
+		if aProjected.z >= v.near && aProjected.z <= v.far && bProjected.z >= v.near && bProjected.z <= v.far {
+			accumulateLine(canvas, depth, aProjected, bProjected, width)
+			return
+		}
+	}
 	a, b, ok := v.clipSegment(s.a, s.b)
 	if !ok {
 		return
 	}
-	accumulateLine(canvas, depth, v.projectPoint(a), v.projectPoint(b), s.style.Width)
+	accumulateLine(canvas, depth, v.projectPoint(a), v.projectPoint(b), width)
 }
 
 // accumulateLine records the coverage of a depth-tested line of the given
@@ -318,27 +381,55 @@ func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, widt
 	}
 	stride := canvas.stride
 	extent := width/2 + 0.5
-	minX := int(clamp(math.Floor(math.Min(a.x, b.x)-extent), 0, float64(stride-1)))
-	maxX := int(clamp(math.Ceil(math.Max(a.x, b.x)+extent), 0, float64(stride-1)))
-	minY := int(clamp(math.Floor(math.Min(a.y, b.y)-extent), 0, float64(canvas.height-1)))
-	maxY := int(clamp(math.Ceil(math.Max(a.y, b.y)+extent), 0, float64(canvas.height-1)))
+	minX, maxX := a.x, b.x
+	if minX > maxX {
+		minX, maxX = maxX, minX
+	}
+	minY, maxY := a.y, b.y
+	if minY > maxY {
+		minY, maxY = maxY, minY
+	}
+	x0 := clampPixel(math.Floor(minX-extent), stride-1)
+	x1 := clampPixel(math.Ceil(maxX+extent), stride-1)
+	y0 := clampPixel(math.Floor(minY-extent), canvas.height-1)
+	y1 := clampPixel(math.Ceil(maxY+extent), canvas.height-1)
 	deltaX, deltaY := b.x-a.x, b.y-a.y
 	lengthSquared := deltaX*deltaX + deltaY*deltaY
+	inverseLengthSquared := 0.0
+	if lengthSquared > 0 {
+		inverseLengthSquared = 1 / lengthSquared
+	}
 	extentSquared := extent * extent
-	for y := minY; y <= maxY; y++ {
-		for x := minX; x <= maxX; x++ {
+	for y := y0; y <= y1; y++ {
+		for x := x0; x <= x1; x++ {
 			px, py := float64(x)+0.5, float64(y)+0.5
+			relativeX, relativeY := px-a.x, py-a.y
 			position := 0.0
 			if lengthSquared > 0 {
-				position = clamp(((px-a.x)*deltaX+(py-a.y)*deltaY)/lengthSquared, 0, 1)
+				position = (relativeX*deltaX + relativeY*deltaY) * inverseLengthSquared
 			}
-			distanceX := px - (a.x + position*deltaX)
-			distanceY := py - (a.y + position*deltaY)
-			distanceSquared := distanceX*distanceX + distanceY*distanceY
+			var distanceSquared float64
+			if position < 0 {
+				position = 0
+				distanceSquared = relativeX*relativeX + relativeY*relativeY
+			} else if position > 1 {
+				position = 1
+				distanceX, distanceY := px-b.x, py-b.y
+				distanceSquared = distanceX*distanceX + distanceY*distanceY
+			} else {
+				cross := relativeX*deltaY - relativeY*deltaX
+				distanceSquared = cross * cross * inverseLengthSquared
+			}
+			if lengthSquared == 0 {
+				distanceSquared = relativeX*relativeX + relativeY*relativeY
+			}
 			if distanceSquared >= extentSquared {
 				continue
 			}
-			coverage := math.Min(extent-math.Sqrt(distanceSquared), 1)
+			coverage := extent - math.Sqrt(distanceSquared)
+			if coverage > 1 {
+				coverage = 1
+			}
 			if coverage <= 0 {
 				continue
 			}
@@ -349,6 +440,16 @@ func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, widt
 			canvas.add(x, y, coverage)
 		}
 	}
+}
+
+func clampPixel(value float64, maximum int) int {
+	if value <= 0 {
+		return 0
+	}
+	if value >= float64(maximum) {
+		return maximum
+	}
+	return int(value)
 }
 
 // blend composites a color over one pixel without touching the depth buffer.
@@ -451,33 +552,48 @@ func rasterize(image *image.RGBA, depth []float64, triangle [3]screenVertex, fil
 	inverseArea := 1 / area
 	pixel := premultiply(fillColor.NRGBA())
 	width := image.Bounds().Dx()
+	startX, startY := float64(minX)+0.5, float64(minY)+0.5
+	rowW0 := edge(triangle[1], triangle[2], startX, startY) * inverseArea
+	rowW1 := edge(triangle[2], triangle[0], startX, startY) * inverseArea
+	rowW2 := edge(triangle[0], triangle[1], startX, startY) * inverseArea
+	dx0 := (triangle[2].y - triangle[1].y) * inverseArea
+	dx1 := (triangle[0].y - triangle[2].y) * inverseArea
+	dx2 := (triangle[1].y - triangle[0].y) * inverseArea
+	dy0 := (triangle[1].x - triangle[2].x) * inverseArea
+	dy1 := (triangle[2].x - triangle[0].x) * inverseArea
+	dy2 := (triangle[0].x - triangle[1].x) * inverseArea
 	for y := minY; y <= maxY; y++ {
+		w0, w1, w2 := rowW0, rowW1, rowW2
 		for x := minX; x <= maxX; x++ {
-			px, py := float64(x)+0.5, float64(y)+0.5
-			w0 := edge(triangle[1], triangle[2], px, py) * inverseArea
-			if w0 < 0 {
-				continue
+			// Incremental weights can drift across an exact shared edge.
+			// Recheck those pixels with the original edge equations.
+			const edgeTolerance = 1e-9
+			if w0 >= -edgeTolerance && w1 >= -edgeTolerance && w2 >= -edgeTolerance {
+				pixelW0, pixelW1, pixelW2 := w0, w1, w2
+				if w0 < edgeTolerance || w1 < edgeTolerance || w2 < edgeTolerance {
+					px, py := float64(x)+0.5, float64(y)+0.5
+					pixelW0 = edge(triangle[1], triangle[2], px, py) * inverseArea
+					pixelW1 = edge(triangle[2], triangle[0], px, py) * inverseArea
+					pixelW2 = edge(triangle[0], triangle[1], px, py) * inverseArea
+				}
+				if pixelW0 < 0 || pixelW1 < 0 || pixelW2 < 0 {
+					w0, w1, w2 = w0+dx0, w1+dx1, w2+dx2
+					continue
+				}
+				index := y*width + x
+				z := pixelW0*triangle[0].z + pixelW1*triangle[1].z + pixelW2*triangle[2].z
+				if z < depth[index] {
+					depth[index] = z
+					offset := y*image.Stride + x*4
+					image.Pix[offset] = pixel.R
+					image.Pix[offset+1] = pixel.G
+					image.Pix[offset+2] = pixel.B
+					image.Pix[offset+3] = pixel.A
+				}
 			}
-			w1 := edge(triangle[2], triangle[0], px, py) * inverseArea
-			if w1 < 0 {
-				continue
-			}
-			w2 := edge(triangle[0], triangle[1], px, py) * inverseArea
-			if w2 < 0 {
-				continue
-			}
-			index := y*width + x
-			z := w0*triangle[0].z + w1*triangle[1].z + w2*triangle[2].z
-			if z >= depth[index] {
-				continue
-			}
-			depth[index] = z
-			offset := y*image.Stride + x*4
-			image.Pix[offset] = pixel.R
-			image.Pix[offset+1] = pixel.G
-			image.Pix[offset+2] = pixel.B
-			image.Pix[offset+3] = pixel.A
+			w0, w1, w2 = w0+dx0, w1+dx1, w2+dx2
 		}
+		rowW0, rowW1, rowW2 = rowW0+dy0, rowW1+dy1, rowW2+dy2
 	}
 }
 

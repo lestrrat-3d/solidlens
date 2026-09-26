@@ -168,3 +168,25 @@ func TestRenderPointLight(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, lit.Pix, withInvalid.Pix)
 }
+
+func TestRenderSharedTriangleEdgeHasNoGaps(t *testing.T) {
+	mesh, err := solidlens.NewMesh(
+		[]solidlens.Vec{
+			{X: -1, Y: 1}, {X: 1, Y: 1}, {X: 1, Y: -1}, {X: -1, Y: -1},
+		},
+		[][3]int{{0, 1, 2}, {0, 2, 3}},
+	)
+	require.NoError(t, err)
+	image, err := solidlens.Render(t.Context(), solidlens.Scene{
+		Camera: solidlens.Camera{
+			Position: solidlens.Vec{Z: 2}, Up: solidlens.Vec{Y: 1}, FOV: 90,
+		},
+		Models: []solidlens.Model{{
+			Mesh: mesh, Material: solidlens.Material{Color: solidlens.RGB(1, 0, 0), Ambient: 1},
+		}},
+	}, solidlens.Settings{Width: 32, Height: 32})
+	require.NoError(t, err)
+	for pixel := 8; pixel < 24; pixel++ {
+		require.Equal(t, uint8(255), image.RGBAAt(pixel, pixel).R, "shared edge pixel %d", pixel)
+	}
+}
