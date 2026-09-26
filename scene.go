@@ -175,12 +175,14 @@ var srgbBuckets = func() [srgbBucketCount]uint8 {
 }()
 
 func linearToSRGB(v float64) uint8 {
-	v = clamp(v, 0, 1)
-	if math.IsNaN(v) {
-		return linearToSRGBExact(v)
+	if v <= 0 {
+		return 0
 	}
 	if v >= 1 {
 		return 255
+	}
+	if math.IsNaN(v) {
+		return linearToSRGBExact(v)
 	}
 	channel := srgbBuckets[int(v*srgbBucketCount)]
 	if channel < 255 && v >= srgbThresholds[channel+1] {

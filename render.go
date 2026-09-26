@@ -10,8 +10,8 @@ import (
 	"math"
 )
 
-// Render draws scene into a new RGBA image. It has no mutable package or
-// receiver state, so concurrent calls are independent.
+// Render draws scene into a new RGBA image. Concurrent calls use separate
+// image and depth buffers; a shared Mesh synchronizes its cached data.
 func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -58,7 +58,9 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 		}
 		var vertices []Vec
 		var triangles [][3]int
-		if mesh, ok := model.Mesh.(*Mesh); ok && mesh != nil {
+		mesh, isMesh := model.Mesh.(*Mesh)
+		isMesh = isMesh && mesh != nil
+		if isMesh {
 			// Mesh owns immutable slices, so rendering can read them without copies.
 			vertices, triangles = mesh.vertices, mesh.triangles
 		} else {
@@ -66,71 +68,89 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 		}
 		var projectedVertices []screenVertex
 		var projectedReady []bool
-		if len(triangles) >= len(vertices) && len(vertices) > 0 {
-			projectedVertices = make([]screenVertex, len(vertices))
-			projectedReady = make([]bool, len(vertices))
-		}
 		var edgeNormals []Vec
-		if model.Edges.Enabled {
-			edgeNormals = make([]Vec, len(triangles))
-		}
-		for triangleIndex, triangle := range triangles {
-			if triangle[0] < 0 || triangle[1] < 0 || triangle[2] < 0 ||
-				triangle[0] >= len(vertices) || triangle[1] >= len(vertices) || triangle[2] >= len(vertices) {
-				return nil, fmt.Errorf("solidlens: model %d triangle %d has an invalid index", modelIndex, triangleIndex)
-			}
-			world := [3]Vec{vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]}
-			if !finiteVec(world[0]) || !finiteVec(world[1]) || !finiteVec(world[2]) {
-				return nil, fmt.Errorf("solidlens: model %d triangle %d has a non-finite vertex", modelIndex, triangleIndex)
-			}
-			normal, ok := world[1].Sub(world[0]).Cross(world[2].Sub(world[0])).Normalize()
-			if !ok {
-				continue
-			}
-			if edgeNormals != nil {
-				edgeNormals[triangleIndex] = normal
-			}
-			// A triangle seen from behind is shaded as its back side, with the
-			// normal turned toward the camera. On a closed mesh these faces
-			// are hidden by nearer ones, and on an open mesh they are the
-			// visible inner side.
-			material := model.Material
-			if normal.Dot(camera.Position.Sub(world[0])) < 0 {
-				normal = normal.Scale(-1)
-				material = back
-			}
-			shade := shadeTriangle(lights, material, normal, world[0])
-			var projected [3]screenVertex
-			var visible bool
-			if projectedVertices == nil {
-				projected, visible = view.projectTriangle(world)
-			} else {
-				visible = true
-				for corner, index := range triangle {
-					if !projectedReady[index] {
-						projectedVertices[index] = view.projectClippedPoint(vertices[index])
-						projectedReady[index] = true
-					}
-					projected[corner] = projectedVertices[index]
-					if projected[corner].z < view.near || projected[corner].z > view.far {
-						visible = false
-					}
+		if isMesh {
+			prepared := mesh.prepareRender(view, camera, settings, model.Material, back, lights)
+			projectedVertices = prepared.vertices
+			for index := range prepared.triangles {
+				triangle := &prepared.triangles[index]
+				if triangle.state.valid {
+					rasterizePrepared(image, depth, triangle.projected, triangle.pixel, &triangle.state)
 				}
 			}
-			if !visible {
-				continue
+		} else {
+			if len(triangles) >= len(vertices) && len(vertices) > 0 {
+				projectedVertices = make([]screenVertex, len(vertices))
+				projectedReady = make([]bool, len(vertices))
 			}
-			rasterize(image, depth, projected, shade)
+			if model.Edges.Enabled {
+				edgeNormals = make([]Vec, len(triangles))
+			}
+			for triangleIndex, triangle := range triangles {
+				if triangle[0] < 0 || triangle[1] < 0 || triangle[2] < 0 ||
+					triangle[0] >= len(vertices) || triangle[1] >= len(vertices) || triangle[2] >= len(vertices) {
+					return nil, fmt.Errorf("solidlens: model %d triangle %d has an invalid index", modelIndex, triangleIndex)
+				}
+				world := [3]Vec{vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]}
+				if !finiteVec(world[0]) || !finiteVec(world[1]) || !finiteVec(world[2]) {
+					return nil, fmt.Errorf("solidlens: model %d triangle %d has a non-finite vertex", modelIndex, triangleIndex)
+				}
+				normal, ok := world[1].Sub(world[0]).Cross(world[2].Sub(world[0])).Normalize()
+				if !ok {
+					continue
+				}
+				if edgeNormals != nil {
+					edgeNormals[triangleIndex] = normal
+				}
+				// A triangle seen from behind is shaded as its back side, with the
+				// normal turned toward the camera. On a closed mesh these faces
+				// are hidden by nearer ones, and on an open mesh they are the
+				// visible inner side.
+				material := model.Material
+				if normal.Dot(camera.Position.Sub(world[0])) < 0 {
+					normal = normal.Scale(-1)
+					material = back
+				}
+				shade := shadeTriangle(lights, material, normal, world[0])
+				var projected [3]screenVertex
+				var visible bool
+				if projectedVertices == nil {
+					projected, visible = view.projectTriangle(world)
+				} else {
+					visible = true
+					for corner, index := range triangle {
+						if !projectedReady[index] {
+							projectedVertices[index] = view.projectClippedPoint(vertices[index])
+							projectedReady[index] = true
+						}
+						projected[corner] = projectedVertices[index]
+						if projected[corner].z < view.near || projected[corner].z > view.far {
+							visible = false
+						}
+					}
+				}
+				if !visible {
+					continue
+				}
+				rasterize(image, depth, projected, shade)
+			}
 		}
 		if model.Edges.Enabled {
 			edges, err := model.Edges.normalized()
 			if err != nil {
 				return nil, fmt.Errorf("solidlens: model %d: %w", modelIndex, err)
 			}
+			var records []edgeRecord
+			if isMesh {
+				records = mesh.cachedEdgeRecords()
+			} else {
+				records = buildEdgeRecords(vertices, triangles, edgeNormals)
+			}
 			edgeGroups = append(edgeGroups, edgeGroup{
 				style:     edges,
-				segments:  collectEdges(vertices, triangles, edgeNormals, camera.Position, edges),
+				records:   records,
 				projected: projectedVertices,
+				mesh:      mesh,
 			})
 		}
 	}
@@ -140,18 +160,44 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 	// a pixel that several of its lines cross is drawn once at the strongest
 	// coverage rather than blended once per line.
 	if len(edgeGroups) > 0 {
-		canvas := newEdgeCanvas(settings.Width, settings.Height)
+		var canvas *edgeCanvas
 		for _, group := range edgeGroups {
+			var coverageKey edgeCoverageKey
+			cacheCoverage := len(scene.Models) == 1 && group.mesh != nil && group.mesh.cache != nil
+			if cacheCoverage {
+				coverageKey = edgeCoverageKey{
+					camera: camera, settings: settings,
+					width: group.style.Width, creaseAngle: group.style.CreaseAngle,
+				}
+				if cached := group.mesh.cache.coverage.Load(); cached != nil && cached.key == coverageKey {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
+					cached.canvas.composite(image, group.style.Color)
+					continue
+				}
+			}
+			if canvas == nil {
+				canvas = newEdgeCanvas(settings.Width, settings.Height)
+			}
 			canvas.reset()
-			for index, segment := range group.segments {
+			creaseCos := math.Cos(group.style.CreaseAngle * math.Pi / 180)
+			for index := range group.records {
 				if index%1024 == 0 {
 					if err := ctx.Err(); err != nil {
 						return nil, err
 					}
 				}
-				accumulateSegment(canvas, depth, view, segment, group.projected, group.style.Width)
+				record := &group.records[index]
+				if drawEdge(record, camera.Position, group.style.CreaseAngle, creaseCos) {
+					accumulateSegment(canvas, depth, view, record, group.projected, group.style.Width)
+				}
 			}
 			canvas.composite(image, group.style.Color)
+			if cacheCoverage {
+				group.mesh.cache.coverage.Store(&edgeCoverageCache{key: coverageKey, canvas: canvas})
+				canvas = nil
+			}
 		}
 	}
 	return image, nil
@@ -290,8 +336,9 @@ const edgeDepthBias = 1e-3
 // accumulated together and composited in a single pass.
 type edgeGroup struct {
 	style     Edges
-	segments  []segment
+	records   []edgeRecord
 	projected []screenVertex
+	mesh      *Mesh
 }
 
 // edgeCanvas accumulates the coverage of one model's edge lines. A pixel that
@@ -357,7 +404,7 @@ func (c *edgeCanvas) composite(image *image.RGBA, lineColor Color) {
 	}
 }
 
-func accumulateSegment(canvas *edgeCanvas, depth []float64, v view, s segment, projected []screenVertex, width float64) {
+func accumulateSegment(canvas *edgeCanvas, depth []float64, v view, s *edgeRecord, projected []screenVertex, width float64) {
 	if projected != nil {
 		aProjected, bProjected := projected[s.aIndex], projected[s.bIndex]
 		if aProjected.z >= v.near && aProjected.z <= v.far && bProjected.z >= v.near && bProjected.z <= v.far {
@@ -401,12 +448,16 @@ func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, widt
 	}
 	extentSquared := extent * extent
 	for y := y0; y <= y1; y++ {
+		startX, py := float64(x0)+0.5, float64(y)+0.5
+		rowX, rowY := startX-a.x, py-a.y
+		dot := rowX*deltaX + rowY*deltaY
+		cross := rowX*deltaY - rowY*deltaX
 		for x := x0; x <= x1; x++ {
-			px, py := float64(x)+0.5, float64(y)+0.5
+			px := float64(x) + 0.5
 			relativeX, relativeY := px-a.x, py-a.y
 			position := 0.0
 			if lengthSquared > 0 {
-				position = (relativeX*deltaX + relativeY*deltaY) * inverseLengthSquared
+				position = dot * inverseLengthSquared
 			}
 			var distanceSquared float64
 			if position < 0 {
@@ -417,27 +468,25 @@ func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, widt
 				distanceX, distanceY := px-b.x, py-b.y
 				distanceSquared = distanceX*distanceX + distanceY*distanceY
 			} else {
-				cross := relativeX*deltaY - relativeY*deltaX
 				distanceSquared = cross * cross * inverseLengthSquared
 			}
 			if lengthSquared == 0 {
 				distanceSquared = relativeX*relativeX + relativeY*relativeY
 			}
-			if distanceSquared >= extentSquared {
-				continue
+			if distanceSquared < extentSquared {
+				coverage := extent - math.Sqrt(distanceSquared)
+				if coverage > 1 {
+					coverage = 1
+				}
+				if coverage > 0 {
+					z := a.z + position*(b.z-a.z)
+					if z <= depth[y*stride+x]*(1+edgeDepthBias) {
+						canvas.add(x, y, coverage)
+					}
+				}
 			}
-			coverage := extent - math.Sqrt(distanceSquared)
-			if coverage > 1 {
-				coverage = 1
-			}
-			if coverage <= 0 {
-				continue
-			}
-			z := a.z + position*(b.z-a.z)
-			if z > depth[y*stride+x]*(1+edgeDepthBias) {
-				continue
-			}
-			canvas.add(x, y, coverage)
+			dot += deltaX
+			cross += deltaY
 		}
 	}
 }
@@ -538,30 +587,62 @@ func shadeTriangle(lights lighting, material Material, normal, position Vec) Col
 }
 
 func rasterize(image *image.RGBA, depth []float64, triangle [3]screenVertex, fillColor Color) {
+	rasterizePixel(image, depth, triangle, premultiply(fillColor.NRGBA()))
+}
+
+func rasterizePixel(image *image.RGBA, depth []float64, triangle [3]screenVertex, pixel color.RGBA) {
+	state := newRasterState(image.Bounds().Dx(), image.Bounds().Dy(), triangle)
+	if state.valid {
+		rasterizePrepared(image, depth, triangle, pixel, &state)
+	}
+}
+
+type rasterState struct {
+	minX, maxX, minY, maxY int
+	inverseArea            float64
+	rowW0, rowW1, rowW2    float64
+	dx0, dx1, dx2          float64
+	dy0, dy1, dy2          float64
+	valid                  bool
+}
+
+func newRasterState(width, height int, triangle [3]screenVertex) rasterState {
 	area := edge(triangle[0], triangle[1], triangle[2].x, triangle[2].y)
 	if area == 0 || math.IsNaN(area) || math.IsInf(area, 0) {
-		return
+		return rasterState{}
 	}
 	minX := maxInt(0, int(math.Floor(min3(triangle[0].x, triangle[1].x, triangle[2].x))))
-	maxX := minInt(image.Bounds().Dx()-1, int(math.Ceil(max3(triangle[0].x, triangle[1].x, triangle[2].x))))
+	maxX := minInt(width-1, int(math.Ceil(max3(triangle[0].x, triangle[1].x, triangle[2].x))))
 	minY := maxInt(0, int(math.Floor(min3(triangle[0].y, triangle[1].y, triangle[2].y))))
-	maxY := minInt(image.Bounds().Dy()-1, int(math.Ceil(max3(triangle[0].y, triangle[1].y, triangle[2].y))))
+	maxY := minInt(height-1, int(math.Ceil(max3(triangle[0].y, triangle[1].y, triangle[2].y))))
 	if minX > maxX || minY > maxY {
-		return
+		return rasterState{}
 	}
 	inverseArea := 1 / area
-	pixel := premultiply(fillColor.NRGBA())
-	width := image.Bounds().Dx()
 	startX, startY := float64(minX)+0.5, float64(minY)+0.5
-	rowW0 := edge(triangle[1], triangle[2], startX, startY) * inverseArea
-	rowW1 := edge(triangle[2], triangle[0], startX, startY) * inverseArea
-	rowW2 := edge(triangle[0], triangle[1], startX, startY) * inverseArea
-	dx0 := (triangle[2].y - triangle[1].y) * inverseArea
-	dx1 := (triangle[0].y - triangle[2].y) * inverseArea
-	dx2 := (triangle[1].y - triangle[0].y) * inverseArea
-	dy0 := (triangle[1].x - triangle[2].x) * inverseArea
-	dy1 := (triangle[2].x - triangle[0].x) * inverseArea
-	dy2 := (triangle[0].x - triangle[1].x) * inverseArea
+	return rasterState{
+		minX: minX, maxX: maxX, minY: minY, maxY: maxY,
+		inverseArea: inverseArea,
+		rowW0:       edge(triangle[1], triangle[2], startX, startY) * inverseArea,
+		rowW1:       edge(triangle[2], triangle[0], startX, startY) * inverseArea,
+		rowW2:       edge(triangle[0], triangle[1], startX, startY) * inverseArea,
+		dx0:         (triangle[2].y - triangle[1].y) * inverseArea,
+		dx1:         (triangle[0].y - triangle[2].y) * inverseArea,
+		dx2:         (triangle[1].y - triangle[0].y) * inverseArea,
+		dy0:         (triangle[1].x - triangle[2].x) * inverseArea,
+		dy1:         (triangle[2].x - triangle[0].x) * inverseArea,
+		dy2:         (triangle[0].x - triangle[1].x) * inverseArea,
+		valid:       true,
+	}
+}
+
+func rasterizePrepared(image *image.RGBA, depth []float64, triangle [3]screenVertex, pixel color.RGBA, state *rasterState) {
+	minX, maxX, minY, maxY := state.minX, state.maxX, state.minY, state.maxY
+	inverseArea := state.inverseArea
+	rowW0, rowW1, rowW2 := state.rowW0, state.rowW1, state.rowW2
+	dx0, dx1, dx2 := state.dx0, state.dx1, state.dx2
+	dy0, dy1, dy2 := state.dy0, state.dy1, state.dy2
+	width := image.Bounds().Dx()
 	for y := minY; y <= maxY; y++ {
 		w0, w1, w2 := rowW0, rowW1, rowW2
 		for x := minX; x <= maxX; x++ {
@@ -608,15 +689,10 @@ func premultiply(c color.NRGBA) color.RGBA {
 
 func fill(image *image.RGBA, fillColor color.NRGBA) {
 	converted := premultiply(fillColor)
-	width := image.Bounds().Dx() * 4
-	for y := range image.Bounds().Dy() {
-		row := image.Pix[y*image.Stride : y*image.Stride+width]
-		for x := 0; x < width; x += 4 {
-			row[x] = converted.R
-			row[x+1] = converted.G
-			row[x+2] = converted.B
-			row[x+3] = converted.A
-		}
+	pix := image.Pix
+	pix[0], pix[1], pix[2], pix[3] = converted.R, converted.G, converted.B, converted.A
+	for filled := 4; filled < len(pix); {
+		filled += copy(pix[filled:], pix[:filled])
 	}
 }
 
