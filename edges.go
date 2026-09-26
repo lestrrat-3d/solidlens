@@ -52,12 +52,6 @@ func (e Edges) normalized() (Edges, error) {
 	return e, nil
 }
 
-// segment is a single edge line in world space.
-type segment struct {
-	a, b           Vec
-	aIndex, bIndex int
-}
-
 // weldScale quantizes vertex positions to ten nanometres so that meshes which
 // repeat a position per triangle, as STL files do, still share edges.
 const weldScale = 1e5
@@ -95,9 +89,7 @@ type edgeRecord struct {
 	faces int
 }
 
-// collectEdges returns the world-space lines to draw for one model. Triangles
-// whose normal is undefined are ignored, and so is any edge they contribute.
-func collectEdges(vertices []Vec, triangles [][3]int, normals []Vec, eye Vec, style Edges) []segment {
+func buildEdgeRecords(vertices []Vec, triangles [][3]int, normals []Vec) []edgeRecord {
 	// Resolve welded positions once per vertex. Edge lookups then use small
 	// integer keys instead of hashing six coordinates for every triangle edge.
 	weldedIDs := make(map[weldedVec]int, len(vertices))
@@ -142,18 +134,7 @@ func collectEdges(vertices []Vec, triangles [][3]int, normals []Vec, eye Vec, st
 			record.faces++
 		}
 	}
-	creaseCos := math.Cos(style.CreaseAngle * math.Pi / 180)
-	segments := make([]segment, 0, len(ordered))
-	for index := range ordered {
-		record := &ordered[index]
-		if !drawEdge(record, eye, style.CreaseAngle, creaseCos) {
-			continue
-		}
-		segments = append(segments, segment{
-			a: record.a, b: record.b, aIndex: record.aIndex, bIndex: record.bIndex,
-		})
-	}
-	return segments
+	return ordered
 }
 
 func drawEdge(record *edgeRecord, eye Vec, creaseAngle, creaseCos float64) bool {

@@ -3,6 +3,8 @@ package solidlens
 import (
 	"fmt"
 	"math"
+	"sync"
+	"sync/atomic"
 
 	"github.com/lestrrat-3d/r3"
 )
@@ -21,6 +23,39 @@ type TriangleSource interface {
 type Mesh struct {
 	vertices  []Vec
 	triangles [][3]int
+	cache     *meshCache
+}
+
+type meshCache struct {
+	edgesOnce sync.Once
+	edges     []edgeRecord
+	// Each pointer holds one immutable result and is replaced when its key changes.
+	render   atomic.Pointer[meshRenderCache]
+	coverage atomic.Pointer[edgeCoverageCache]
+}
+
+func (m *Mesh) cachedEdgeRecords() []edgeRecord {
+	if m.cache == nil {
+		return m.buildEdgeRecords()
+	}
+	m.cache.edgesOnce.Do(func() {
+		m.cache.edges = m.buildEdgeRecords()
+	})
+	return m.cache.edges
+}
+
+func (m *Mesh) buildEdgeRecords() []edgeRecord {
+	normals := make([]Vec, len(m.triangles))
+	for index, triangle := range m.triangles {
+		corners := [3]Vec{
+			m.vertices[triangle[0]], m.vertices[triangle[1]], m.vertices[triangle[2]],
+		}
+		normal, ok := corners[1].Sub(corners[0]).Cross(corners[2].Sub(corners[0])).Normalize()
+		if ok {
+			normals[index] = normal
+		}
+	}
+	return buildEdgeRecords(m.vertices, m.triangles, normals)
 }
 
 // NewMesh copies and validates indexed triangle geometry.
@@ -49,6 +84,7 @@ func NewMesh(vertices []Vec, triangles [][3]int) (*Mesh, error) {
 	return &Mesh{
 		vertices:  append([]Vec(nil), vertices...),
 		triangles: append([][3]int(nil), triangles...),
+		cache:     &meshCache{},
 	}, nil
 }
 
