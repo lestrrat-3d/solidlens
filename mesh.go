@@ -30,8 +30,8 @@ type meshCache struct {
 	edgesOnce sync.Once
 	edges     []edgeRecord
 	// Each pointer holds one immutable result and is replaced when its key changes.
-	render    atomic.Pointer[meshRenderCache]
-	coverage  atomic.Pointer[edgeCoverageCache]
+	render   atomic.Pointer[meshRenderCache]
+	coverage atomic.Pointer[edgeCoverageCache]
 }
 
 func (m *Mesh) cachedEdgeRecords() []edgeRecord {
