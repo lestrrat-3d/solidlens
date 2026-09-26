@@ -37,6 +37,7 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 	for index := range depth {
 		depth[index] = math.Inf(1)
 	}
+	lights := prepareLighting(scene)
 	var edgeGroups []edgeGroup
 	for modelIndex, model := range scene.Models {
 		if err := ctx.Err(); err != nil {
@@ -55,8 +56,14 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 			}
 			back = *model.BackMaterial
 		}
-		vertices := model.Mesh.Vertices()
-		triangles := model.Mesh.Triangles()
+		var vertices []Vec
+		var triangles [][3]int
+		if mesh, ok := model.Mesh.(*Mesh); ok && mesh != nil {
+			// Mesh owns immutable slices, so rendering can read them without copies.
+			vertices, triangles = mesh.vertices, mesh.triangles
+		} else {
+			vertices, triangles = model.Mesh.Vertices(), model.Mesh.Triangles()
+		}
 		for triangleIndex, triangle := range triangles {
 			if triangle[0] < 0 || triangle[1] < 0 || triangle[2] < 0 ||
 				triangle[0] >= len(vertices) || triangle[1] >= len(vertices) || triangle[2] >= len(vertices) {
@@ -79,7 +86,7 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 				normal = normal.Scale(-1)
 				material = back
 			}
-			shade := shadeTriangle(scene, material, normal, world[0])
+			shade := shadeTriangle(lights, material, normal, world[0])
 			projected, visible := view.projectTriangle(world)
 			if !visible {
 				continue
@@ -283,10 +290,12 @@ func (c *edgeCanvas) add(x, y int, coverage float64) {
 
 // composite draws the accumulated coverage in lineColor, one blend per pixel.
 func (c *edgeCanvas) composite(image *image.RGBA, lineColor Color) {
+	source := lineColor.NRGBA()
+	opacity := clamp(lineColor.A, 0, 1)
 	for y := c.minY; y <= c.maxY; y++ {
 		for x := c.minX; x <= c.maxX; x++ {
 			if coverage := c.coverage[y*c.stride+x]; coverage > 0 {
-				blend(image, x, y, lineColor, coverage)
+				blend(image, x, y, source, opacity*coverage)
 			}
 		}
 	}
@@ -315,6 +324,7 @@ func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, widt
 	maxY := int(clamp(math.Ceil(math.Max(a.y, b.y)+extent), 0, float64(canvas.height-1)))
 	deltaX, deltaY := b.x-a.x, b.y-a.y
 	lengthSquared := deltaX*deltaX + deltaY*deltaY
+	extentSquared := extent * extent
 	for y := minY; y <= maxY; y++ {
 		for x := minX; x <= maxX; x++ {
 			px, py := float64(x)+0.5, float64(y)+0.5
@@ -322,7 +332,13 @@ func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, widt
 			if lengthSquared > 0 {
 				position = clamp(((px-a.x)*deltaX+(py-a.y)*deltaY)/lengthSquared, 0, 1)
 			}
-			coverage := clamp(extent-math.Hypot(px-(a.x+position*deltaX), py-(a.y+position*deltaY)), 0, 1)
+			distanceX := px - (a.x + position*deltaX)
+			distanceY := py - (a.y + position*deltaY)
+			distanceSquared := distanceX*distanceX + distanceY*distanceY
+			if distanceSquared >= extentSquared {
+				continue
+			}
+			coverage := math.Min(extent-math.Sqrt(distanceSquared), 1)
 			if coverage <= 0 {
 				continue
 			}
@@ -336,24 +352,40 @@ func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, widt
 }
 
 // blend composites a color over one pixel without touching the depth buffer.
-func blend(image *image.RGBA, x, y int, over Color, coverage float64) {
-	alpha := clamp(over.A, 0, 1) * coverage
+func blend(image *image.RGBA, x, y int, source color.NRGBA, alpha float64) {
 	if alpha <= 0 {
 		return
 	}
-	source := over.NRGBA()
-	destination := image.RGBAAt(x, y)
+	offset := image.PixOffset(x, y)
 	inverse := 1 - alpha
-	image.SetRGBA(x, y, color.RGBA{
-		R: uint8(float64(source.R)*alpha + float64(destination.R)*inverse + 0.5),
-		G: uint8(float64(source.G)*alpha + float64(destination.G)*inverse + 0.5),
-		B: uint8(float64(source.B)*alpha + float64(destination.B)*inverse + 0.5),
-		A: uint8(255*alpha + float64(destination.A)*inverse + 0.5),
-	})
+	image.Pix[offset] = uint8(float64(source.R)*alpha + float64(image.Pix[offset])*inverse + 0.5)
+	image.Pix[offset+1] = uint8(float64(source.G)*alpha + float64(image.Pix[offset+1])*inverse + 0.5)
+	image.Pix[offset+2] = uint8(float64(source.B)*alpha + float64(image.Pix[offset+2])*inverse + 0.5)
+	image.Pix[offset+3] = uint8(255*alpha + float64(image.Pix[offset+3])*inverse + 0.5)
 }
 
-func shadeTriangle(scene Scene, material Material, normal, position Vec) Color {
-	intensity := math.Max(0, material.Ambient)
+type preparedDirectionalLight struct {
+	direction Vec
+	intensity float64
+	luminance float64
+}
+
+type preparedPointLight struct {
+	position  Vec
+	intensity float64
+	luminance float64
+}
+
+type lighting struct {
+	directional []preparedDirectionalLight
+	points      []preparedPointLight
+}
+
+func prepareLighting(scene Scene) lighting {
+	prepared := lighting{
+		directional: make([]preparedDirectionalLight, 0, len(scene.DirectionalLights)),
+		points:      make([]preparedPointLight, 0, len(scene.PointLights)),
+	}
 	for _, light := range scene.DirectionalLights {
 		if !finiteVec(light.Direction) || !finiteColor(light.Color) || !finite(light.Intensity) {
 			continue
@@ -362,19 +394,38 @@ func shadeTriangle(scene Scene, material Material, normal, position Vec) Color {
 		if !ok {
 			continue
 		}
-		intensity += math.Max(0, normal.Dot(direction.Scale(-1))*light.Intensity) * luminance(light.Color)
+		prepared.directional = append(prepared.directional, preparedDirectionalLight{
+			direction: direction.Scale(-1),
+			intensity: light.Intensity,
+			luminance: luminance(light.Color),
+		})
 	}
 	for _, light := range scene.PointLights {
 		if !finiteVec(light.Position) || !finiteColor(light.Color) || !finite(light.Intensity) {
 			continue
 		}
-		delta := light.Position.Sub(position)
+		prepared.points = append(prepared.points, preparedPointLight{
+			position:  light.Position,
+			intensity: light.Intensity,
+			luminance: luminance(light.Color),
+		})
+	}
+	return prepared
+}
+
+func shadeTriangle(lights lighting, material Material, normal, position Vec) Color {
+	intensity := math.Max(0, material.Ambient)
+	for _, light := range lights.directional {
+		intensity += math.Max(0, normal.Dot(light.direction)*light.intensity) * light.luminance
+	}
+	for _, light := range lights.points {
+		delta := light.position.Sub(position)
 		distanceSquared := delta.Dot(delta)
 		direction, ok := delta.Normalize()
 		if !ok {
 			continue
 		}
-		intensity += math.Max(0, normal.Dot(direction)) * light.Intensity * luminance(light.Color) /
+		intensity += math.Max(0, normal.Dot(direction)) * light.intensity * light.luminance /
 			math.Max(1, distanceSquared)
 	}
 	return Color{
@@ -397,23 +448,35 @@ func rasterize(image *image.RGBA, depth []float64, triangle [3]screenVertex, fil
 	if minX > maxX || minY > maxY {
 		return
 	}
-	color := fillColor.NRGBA()
+	inverseArea := 1 / area
+	pixel := premultiply(fillColor.NRGBA())
+	width := image.Bounds().Dx()
 	for y := minY; y <= maxY; y++ {
 		for x := minX; x <= maxX; x++ {
 			px, py := float64(x)+0.5, float64(y)+0.5
-			w0 := edge(triangle[1], triangle[2], px, py) / area
-			w1 := edge(triangle[2], triangle[0], px, py) / area
-			w2 := edge(triangle[0], triangle[1], px, py) / area
-			if w0 < 0 || w1 < 0 || w2 < 0 {
+			w0 := edge(triangle[1], triangle[2], px, py) * inverseArea
+			if w0 < 0 {
 				continue
 			}
-			index := y*image.Bounds().Dx() + x
+			w1 := edge(triangle[2], triangle[0], px, py) * inverseArea
+			if w1 < 0 {
+				continue
+			}
+			w2 := edge(triangle[0], triangle[1], px, py) * inverseArea
+			if w2 < 0 {
+				continue
+			}
+			index := y*width + x
 			z := w0*triangle[0].z + w1*triangle[1].z + w2*triangle[2].z
 			if z >= depth[index] {
 				continue
 			}
 			depth[index] = z
-			image.Set(x, y, color)
+			offset := y*image.Stride + x*4
+			image.Pix[offset] = pixel.R
+			image.Pix[offset+1] = pixel.G
+			image.Pix[offset+2] = pixel.B
+			image.Pix[offset+3] = pixel.A
 		}
 	}
 }
@@ -422,10 +485,21 @@ func edge(a, b screenVertex, x, y float64) float64 {
 	return (x-a.x)*(b.y-a.y) - (y-a.y)*(b.x-a.x)
 }
 
-func fill(image *image.RGBA, color color.NRGBA) {
-	for y := image.Bounds().Min.Y; y < image.Bounds().Max.Y; y++ {
-		for x := image.Bounds().Min.X; x < image.Bounds().Max.X; x++ {
-			image.Set(x, y, color)
+func premultiply(c color.NRGBA) color.RGBA {
+	r, g, b, a := c.RGBA()
+	return color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)}
+}
+
+func fill(image *image.RGBA, fillColor color.NRGBA) {
+	converted := premultiply(fillColor)
+	width := image.Bounds().Dx() * 4
+	for y := range image.Bounds().Dy() {
+		row := image.Pix[y*image.Stride : y*image.Stride+width]
+		for x := 0; x < width; x += 4 {
+			row[x] = converted.R
+			row[x+1] = converted.G
+			row[x+2] = converted.B
+			row[x+3] = converted.A
 		}
 	}
 }

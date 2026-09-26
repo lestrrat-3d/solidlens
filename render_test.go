@@ -112,3 +112,59 @@ func TestRenderHonorsCanceledContext(t *testing.T) {
 	_, err := solidlens.Render(ctx, solidlens.Scene{}, solidlens.Settings{})
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestRenderPreservesAlpha(t *testing.T) {
+	mesh, err := solidlens.NewMesh(
+		[]solidlens.Vec{{X: -1, Y: -1}, {X: 1, Y: -1}, {Y: 1}},
+		[][3]int{{0, 1, 2}},
+	)
+	require.NoError(t, err)
+	background := solidlens.RGBA(0.7, 0.2, 0.1, 0.4)
+	surface := solidlens.RGBA(0.2, 0.7, 0.4, 0.6)
+	image, err := solidlens.Render(t.Context(), solidlens.Scene{
+		Camera: solidlens.Camera{Position: solidlens.Vec{Z: 2}, Up: solidlens.Vec{Y: 1}},
+		Models: []solidlens.Model{{
+			Mesh:     mesh,
+			Material: solidlens.Material{Color: surface, Ambient: 1},
+		}},
+		Background: background,
+	}, solidlens.Settings{Width: 64, Height: 64})
+	require.NoError(t, err)
+	require.Equal(t, color.RGBAModel.Convert(background.NRGBA()), image.RGBAAt(0, 0))
+	require.Equal(t, color.RGBAModel.Convert(surface.NRGBA()), image.RGBAAt(32, 32))
+}
+
+func TestRenderPointLight(t *testing.T) {
+	mesh, err := solidlens.NewMesh(
+		[]solidlens.Vec{{X: -1, Y: -1}, {X: 1, Y: -1}, {Y: 1}},
+		[][3]int{{0, 1, 2}},
+	)
+	require.NoError(t, err)
+	scene := solidlens.Scene{
+		Camera: solidlens.Camera{Position: solidlens.Vec{Z: 2}, Up: solidlens.Vec{Y: 1}},
+		Models: []solidlens.Model{{
+			Mesh:     mesh,
+			Material: solidlens.Matte(solidlens.RGB(1, 1, 1)),
+		}},
+		PointLights: []solidlens.PointLight{{
+			Position:  solidlens.Vec{Z: 2},
+			Color:     solidlens.RGB(1, 1, 1),
+			Intensity: 4,
+		}},
+	}
+	settings := solidlens.Settings{Width: 64, Height: 64}
+	lit, err := solidlens.Render(t.Context(), scene, settings)
+	require.NoError(t, err)
+	scene.PointLights = nil
+	unlit, err := solidlens.Render(t.Context(), scene, settings)
+	require.NoError(t, err)
+	require.Greater(t, lit.RGBAAt(32, 32).R, unlit.RGBAAt(32, 32).R)
+
+	scene.PointLights = []solidlens.PointLight{
+		{Position: solidlens.Vec{Z: 2}, Color: solidlens.RGB(1, 1, 1), Intensity: 4},
+		{Position: solidlens.Vec{X: math.NaN()}, Color: solidlens.RGB(1, 1, 1), Intensity: 4},
+	}
+	withInvalid, err := solidlens.Render(t.Context(), scene, settings)
+	require.NoError(t, err)
+	require.Equal(t, lit.Pix, withInvalid.Pix)
+}
