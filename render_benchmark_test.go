@@ -8,6 +8,14 @@ import (
 	"github.com/lestrrat-3d/solidlens"
 )
 
+type benchmarkTriangleSource struct {
+	vertices  []solidlens.Vec
+	triangles [][3]int
+}
+
+func (s benchmarkTriangleSource) Vertices() []solidlens.Vec { return s.vertices }
+func (s benchmarkTriangleSource) Triangles() [][3]int       { return s.triangles }
+
 func benchmarkScene(b *testing.B, divisions int, edges solidlens.Edges) solidlens.Scene {
 	b.Helper()
 	vertices, triangles := benchmarkGrid(divisions)
@@ -45,17 +53,40 @@ func BenchmarkRender(b *testing.B) {
 		divisions int
 		pixels    int
 		edges     solidlens.Edges
+		points    bool
+		source    bool
 	}{
-		{"surface_8192_triangles_512px", 64, 512, solidlens.Edges{}},
-		{"outline_8192_triangles_512px", 64, 512, outline},
-		{"wireframe_8192_triangles_512px", 64, 512, wireframe},
-		{"surface_32768_triangles_512px", 128, 512, solidlens.Edges{}},
-		{"wireframe_32768_triangles_512px", 128, 512, wireframe},
-		{"surface_8192_triangles_1024px", 64, 1024, solidlens.Edges{}},
+		{"surface_8192_triangles_512px", 64, 512, solidlens.Edges{}, false, false},
+		{"outline_8192_triangles_512px", 64, 512, outline, false, false},
+		{"wireframe_8192_triangles_512px", 64, 512, wireframe, false, false},
+		{"surface_32768_triangles_512px", 128, 512, solidlens.Edges{}, false, false},
+		{"wireframe_32768_triangles_512px", 128, 512, wireframe, false, false},
+		{"surface_8192_triangles_1024px", 64, 1024, solidlens.Edges{}, false, false},
+		{"point_lights_8192_triangles_512px", 64, 512, solidlens.Edges{}, true, false},
+		{"triangle_source_8192_triangles_512px", 64, 512, solidlens.Edges{}, false, true},
 	}
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			scene := benchmarkScene(b, tc.divisions, tc.edges)
+			if tc.source {
+				mesh := scene.Models[0].Mesh
+				scene.Models[0].Mesh = benchmarkTriangleSource{mesh.Vertices(), mesh.Triangles()}
+			}
+			if tc.points {
+				scene.DirectionalLights = nil
+				for _, position := range []solidlens.Vec{
+					{X: -40, Y: -40, Z: 60}, {X: 40, Y: -40, Z: 60},
+					{X: -40, Y: 40, Z: 60}, {X: 40, Y: 40, Z: 60},
+					{X: 0, Y: -50, Z: 70}, {X: 50, Y: 0, Z: 70},
+					{X: 0, Y: 50, Z: 70}, {X: -50, Y: 0, Z: 70},
+				} {
+					scene.PointLights = append(scene.PointLights, solidlens.PointLight{
+						Position:  position,
+						Color:     solidlens.RGB(1, 1, 1),
+						Intensity: 100,
+					})
+				}
+			}
 			settings := solidlens.Settings{Width: tc.pixels, Height: tc.pixels}
 			b.ReportAllocs()
 			b.ResetTimer()
