@@ -54,8 +54,8 @@ func (e Edges) normalized() (Edges, error) {
 
 // segment is a single edge line in world space.
 type segment struct {
-	a, b  Vec
-	style Edges
+	a, b           Vec
+	aIndex, bIndex int
 }
 
 // weldScale quantizes vertex positions to ten nanometres so that meshes which
@@ -75,22 +75,21 @@ func weld(v Vec) weldedVec {
 }
 
 type edgeKey struct {
-	low, high weldedVec
+	low, high int
 }
 
-func newEdgeKey(a, b Vec) edgeKey {
-	low, high := weld(a), weld(b)
-	if high.x < low.x ||
-		(high.x == low.x && high.y < low.y) ||
-		(high.x == low.x && high.y == low.y && high.z < low.z) {
+func newEdgeKey(a, b int) edgeKey {
+	low, high := a, b
+	if high < low {
 		low, high = high, low
 	}
 	return edgeKey{low: low, high: high}
 }
 
 type edgeRecord struct {
-	a, b    Vec
-	normals [2]Vec
+	a, b           Vec
+	aIndex, bIndex int
+	normals        [2]Vec
 	// point is a position on one of the faces, used for the silhouette test.
 	point Vec
 	faces int
@@ -98,29 +97,45 @@ type edgeRecord struct {
 
 // collectEdges returns the world-space lines to draw for one model. Triangles
 // whose normal is undefined are ignored, and so is any edge they contribute.
-func collectEdges(vertices []Vec, triangles [][3]int, eye Vec, style Edges) []segment {
-	records := make(map[edgeKey]*edgeRecord)
+func collectEdges(vertices []Vec, triangles [][3]int, normals []Vec, eye Vec, style Edges) []segment {
+	// Resolve welded positions once per vertex. Edge lookups then use small
+	// integer keys instead of hashing six coordinates for every triangle edge.
+	weldedIDs := make(map[weldedVec]int, len(vertices))
+	vertexIDs := make([]int, len(vertices))
+	for index, vertex := range vertices {
+		key := weld(vertex)
+		id, exists := weldedIDs[key]
+		if !exists {
+			id = len(weldedIDs) + 1
+			weldedIDs[key] = id
+		}
+		vertexIDs[index] = id
+	}
+	records := make(map[edgeKey]int, len(triangles)*3/2)
 	// ordered holds the same records in first-encounter order. Ranging over
 	// records instead would take Go's randomised map order, and overlapping
 	// edge lines blend, so the drawn image would differ between calls. A
 	// closed mesh shares every edge between two faces, so it has half of the
 	// three edges per triangle; an open one appends past that.
-	ordered := make([]*edgeRecord, 0, len(triangles)*3/2)
-	for _, triangle := range triangles {
+	ordered := make([]edgeRecord, 0, len(triangles)*3/2)
+	for triangleIndex, triangle := range triangles {
 		corners := [3]Vec{vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]}
-		normal, ok := corners[1].Sub(corners[0]).Cross(corners[2].Sub(corners[0])).Normalize()
-		if !ok {
+		normal := normals[triangleIndex]
+		if normal == (Vec{}) {
 			continue
 		}
 		for i, a := range corners {
 			b := corners[(i+1)%3]
-			key := newEdgeKey(a, b)
-			record, exists := records[key]
+			key := newEdgeKey(vertexIDs[triangle[i]], vertexIDs[triangle[(i+1)%3]])
+			recordIndex, exists := records[key]
 			if !exists {
-				record = &edgeRecord{a: a, b: b, point: corners[0]}
-				records[key] = record
-				ordered = append(ordered, record)
+				recordIndex = len(ordered)
+				records[key] = recordIndex
+				ordered = append(ordered, edgeRecord{
+					a: a, b: b, aIndex: triangle[i], bIndex: triangle[(i+1)%3], point: corners[0],
+				})
 			}
+			record := &ordered[recordIndex]
 			if record.faces < len(record.normals) {
 				record.normals[record.faces] = normal
 			}
@@ -129,11 +144,14 @@ func collectEdges(vertices []Vec, triangles [][3]int, eye Vec, style Edges) []se
 	}
 	creaseCos := math.Cos(style.CreaseAngle * math.Pi / 180)
 	segments := make([]segment, 0, len(ordered))
-	for _, record := range ordered {
+	for index := range ordered {
+		record := &ordered[index]
 		if !drawEdge(record, eye, style.CreaseAngle, creaseCos) {
 			continue
 		}
-		segments = append(segments, segment{a: record.a, b: record.b, style: style})
+		segments = append(segments, segment{
+			a: record.a, b: record.b, aIndex: record.aIndex, bIndex: record.bIndex,
+		})
 	}
 	return segments
 }
