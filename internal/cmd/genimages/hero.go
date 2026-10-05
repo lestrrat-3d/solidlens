@@ -131,7 +131,7 @@ func (b *voxelBuilder) box(center, size solidlens.Vec) {
 }
 
 func (b *voxelBuilder) tile(p0, p1, p2, p3 solidlens.Vec) {
-	b.builder.add([]solidlens.Vec{p0, p1, p2, p3}, [][3]int{{0, 1, 2}, {0, 2, 3}})
+	b.add([]solidlens.Vec{p0, p1, p2, p3}, [][3]int{{0, 1, 2}, {0, 2, 3}})
 }
 
 func heroScene() (solidlens.Scene, error) {
@@ -302,8 +302,8 @@ func buildHeroIsland(layers []heroLayer) {
 				solidlens.Vec{X: float64(x), Y: float64(y), Z: height - 0.36},
 				solidlens.Vec{X: 1, Y: 1, Z: 0.72},
 			)
-			for dx := 0; dx < 2; dx++ {
-				for dy := 0; dy < 2; dy++ {
+			for dx := range 2 {
+				for dy := range 2 {
 					top := heroGroundColor(x, y, dx, dy)
 					layers[top].builder.box(
 						solidlens.Vec{
@@ -567,7 +567,7 @@ func buildHeroSky(lights, clouds *voxelBuilder, camera solidlens.Camera) {
 	}
 	original := newVoxelBuilder()
 	addHeroCloud(original, solidlens.Vec{X: 8, Y: 5, Z: 8}, 1)
-	clouds.builder.add(original.vertices, original.triangles)
+	clouds.add(original.vertices, original.triangles)
 	copyHeroCloud(clouds, original, camera, -1113, 421)
 	copyHeroCloud(clouds, original, camera, -8, 451)
 }
@@ -583,7 +583,7 @@ func copyHeroCloud(dst, original *voxelBuilder, camera solidlens.Camera, dx, dy 
 		shift := depth / (405 * focal)
 		vertices[i] = vertex.Add(right.Scale(dx * shift)).Add(up.Scale(-dy * shift))
 	}
-	dst.builder.add(vertices, original.triangles)
+	dst.add(vertices, original.triangles)
 }
 
 func addHeroCloud(clouds *voxelBuilder, center solidlens.Vec, scale float64) {
