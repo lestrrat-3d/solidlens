@@ -1,7 +1,7 @@
 # solidlens
 
 <p align="center">
-  <img src="docs/images/hero.png" alt="A cyan torus, violet block, and coral cylinder rendered by solidlens against a deep navy background" width="900">
+  <img src="docs/images/hero.png" alt="The solidlens title above a floating voxel island with houses, trees, a bridge, and a waterfall" width="900">
 </p>
 
 `solidlens` is a pure-Go, headless raster renderer for triangle meshes. It
