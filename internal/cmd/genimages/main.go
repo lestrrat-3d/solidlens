@@ -62,35 +62,6 @@ func (r galleryRender) write() error {
 	return closeErr
 }
 
-func heroScene() (solidlens.Scene, error) {
-	text, err := readModel("solidlens.stl")
-	if err != nil {
-		return solidlens.Scene{}, err
-	}
-	ball, err := readModel("hero-ball.stl")
-	if err != nil {
-		return solidlens.Scene{}, err
-	}
-	pyramid, err := readModel("hero-pyramid.stl")
-	if err != nil {
-		return solidlens.Scene{}, err
-	}
-	cube, err := readModel("hero-cube.stl")
-	if err != nil {
-		return solidlens.Scene{}, err
-	}
-	scene := studioScene(
-		solidlens.Model{Mesh: text, Material: solidlens.Matte(solidlens.RGB(0.78, 0.9, 1))},
-		outlined(solidlens.Model{Mesh: ball, Material: solidlens.Matte(solidlens.RGB(0.04, 0.78, 0.88))}),
-		outlined(solidlens.Model{Mesh: pyramid, Material: solidlens.Matte(solidlens.RGB(0.47, 0.21, 0.93))}),
-		outlined(solidlens.Model{Mesh: cube, Material: solidlens.Matte(solidlens.RGB(1, 0.31, 0.22))}),
-	)
-	scene.Camera.Position = solidlens.Vec{X: -0.24, Y: -5.5, Z: 2.5}
-	scene.Camera.Target = solidlens.Vec{Z: 2.25}
-	scene.Camera.FOV = 52
-	return scene, nil
-}
-
 func mechanicalScene() (solidlens.Scene, error) {
 	blue, err := readModel("mechanical-blue.stl")
 	if err != nil {
@@ -252,21 +223,6 @@ func cone(center solidlens.Vec, radius, height float64, segments int) *solidlens
 	return b.mesh()
 }
 
-func pyramid(center solidlens.Vec, width, height float64) *solidlens.Mesh {
-	half := width / 2
-	b := newBuilder()
-	b.add([]solidlens.Vec{
-		center.Add(solidlensVec(-half, -half, 0)),
-		center.Add(solidlensVec(half, -half, 0)),
-		center.Add(solidlensVec(half, half, 0)),
-		center.Add(solidlensVec(-half, half, 0)),
-		center.Add(solidlensVec(0, 0, height)),
-	}, [][3]int{
-		{0, 2, 1}, {0, 3, 2}, {0, 1, 4}, {1, 2, 4}, {2, 3, 4}, {3, 0, 4},
-	})
-	return b.mesh()
-}
-
 func sphere(center solidlens.Vec, radius float64, slices, stacks int) *solidlens.Mesh {
 	b := newBuilder()
 	vertices := make([]solidlens.Vec, 0, (slices+1)*(stacks+1))
@@ -347,16 +303,7 @@ func writeModelAssets() error {
 	if err := os.MkdirAll(modelDir, 0o755); err != nil {
 		return err
 	}
-	if err := writeSTL("solidlens.stl", wordMesh("Solidlens")); err != nil {
-		return err
-	}
-	if err := writeSTL("hero-ball.stl", sphere(solidlens.Vec{X: -1.8, Z: 1.55}, 0.8, 32, 18)); err != nil {
-		return err
-	}
-	if err := writeSTL("hero-pyramid.stl", pyramid(solidlens.Vec{Z: 0.75}, 1.6, 1.6)); err != nil {
-		return err
-	}
-	if err := writeSTL("hero-cube.stl", boxMesh(solidlens.Vec{X: 1.8, Z: 1.55}, solidlens.Vec{X: 1.6, Y: 1.6, Z: 1.6})); err != nil {
+	if err := writeHeroModels(); err != nil {
 		return err
 	}
 
@@ -390,6 +337,14 @@ func writeModelAssets() error {
 }
 
 func writeSTL(name string, mesh *solidlens.Mesh) error {
+	return writeSTLFormat(name, mesh, stl.FormatASCII)
+}
+
+func writeBinarySTL(name string, mesh *solidlens.Mesh) error {
+	return writeSTLFormat(name, mesh, stl.FormatBinary)
+}
+
+func writeSTLFormat(name string, mesh *solidlens.Mesh, format stl.Format) error {
 	file, err := os.Create(filepath.Join(modelDir, name)) //nolint:gosec
 	if err != nil {
 		return err
@@ -404,7 +359,7 @@ func writeSTL(name string, mesh *solidlens.Mesh) error {
 		}
 		triangles = append(triangles, facet)
 	}
-	err = stl.Encode(file, &stl.Solid{Name: "solidlens", Triangles: triangles}, stl.FormatASCII)
+	err = stl.Encode(file, &stl.Solid{Name: "solidlens", Triangles: triangles}, format)
 	closeErr := file.Close()
 	if err != nil {
 		return err
@@ -443,44 +398,6 @@ func mergeMeshes(meshes ...*solidlens.Mesh) *solidlens.Mesh {
 	b := newBuilder()
 	for _, mesh := range meshes {
 		b.add(mesh.Vertices(), mesh.Triangles())
-	}
-	return b.mesh()
-}
-
-func wordMesh(text string) *solidlens.Mesh {
-	patterns := map[rune][]string{
-		'S': {"01110", "10000", "10000", "01110", "00001", "00001", "11110"},
-		'o': {"00000", "00000", "01110", "10001", "10001", "10001", "01110"},
-		'l': {"01000", "01000", "01000", "01000", "01000", "01000", "00110"},
-		'i': {"00000", "00100", "00000", "01100", "00100", "00100", "01110"},
-		'd': {"00001", "00001", "01101", "10011", "10001", "10011", "01101"},
-		'e': {"00000", "00000", "01110", "10001", "11111", "10000", "01110"},
-		'n': {"00000", "00000", "10110", "11001", "10001", "10001", "10001"},
-		's': {"00000", "00000", "01111", "10000", "01110", "00001", "11110"},
-	}
-	const cell = 0.16
-	const gap = 0.08
-	width := 0.0
-	for _, letter := range text {
-		width += float64(len(patterns[letter][0]))*cell + gap
-	}
-	width -= gap
-	b := newBuilder()
-	x := -width / 2
-	for _, letter := range text {
-		glyph := patterns[letter]
-		for row, pixels := range glyph {
-			for column, pixel := range pixels {
-				if pixel != '1' {
-					continue
-				}
-				b.box(
-					solidlens.Vec{X: x + (float64(column)+0.5)*cell, Y: 0.1, Z: 4.2 - (float64(row)+0.5)*cell},
-					solidlens.Vec{X: cell * 1.03, Y: 0.26, Z: cell * 1.03},
-				)
-			}
-		}
-		x += float64(len(glyph[0]))*cell + gap
 	}
 	return b.mesh()
 }
