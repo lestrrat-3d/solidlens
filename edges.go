@@ -133,17 +133,22 @@ func edgeTolerance(setting float64, v view, vertices []Vec) float64 {
 // shares an edge with, so a gap between two faces does not add a crease of its
 // own. A solid triangle is a tall one or a sliver that has already adopted.
 //
-// A chain of slivers adopts from the end that reaches a tall triangle, one
-// step a pass, but only while the widths of the slivers in the chain add up to
-// less than tolerance. Slivers that share edges and face nearly the same way
-// form a group, and a group adopts as a whole or not at all. A flat face drawn
-// as a fan of long thin triangles is wider than tolerance, so the reach stops
-// short of its far side and the whole fan keeps its own normals, which leaves
-// its creases where they are. A thin step beside the fan faces another way, so
-// it is a group of its own and takes the normal of the face it borders.
+// Slivers that share an edge that is no crease form a group. A group is a gap
+// only if it is itself thinner than tolerance, which is twice its area over the
+// length of its boundary. A wider group, such as a flat face or a bore drawn as
+// a fan of long thin triangles, is a face: its slivers keep their own normals
+// and count as solid for their neighbours. A thin step beside such a face faces
+// another way, so it is a group of its own and takes the normal of the face it
+// borders.
+//
+// A chain of slivers in a gap adopts from the end that reaches a solid
+// triangle, one step a pass, but only while the widths of the slivers in the
+// chain add up to less than tolerance, and a gap adopts as a whole or not at
+// all.
 func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf [][3]int, ordered []edgeRecord,
-	tolerance float64) []Vec {
+	tolerance, smoothCos float64) []Vec {
 	heights := make([]float64, len(triangles))
+	areas := make([]float64, len(triangles))
 	// reach is the combined width of the slivers between a solid triangle and
 	// the tall triangle its normal came from. It is zero for a tall triangle.
 	reach := make([]float64, len(triangles))
@@ -155,14 +160,25 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 		}
 		a, b, c := vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]
 		longest := math.Max(b.Sub(a).Len(), math.Max(c.Sub(b).Len(), a.Sub(c).Len()))
-		heights[index] = b.Sub(a).Cross(c.Sub(a)).Len() / longest
+		areas[index] = b.Sub(a).Cross(c.Sub(a)).Len() / 2
+		heights[index] = 2 * areas[index] / longest
 		if heights[index] >= tolerance {
 			solid[index] = true
 			continue
 		}
 		pending = append(pending, index)
 	}
-	groupOf, groupCount := sliverGroups(pending, heights, normals, tolerance, edgesOf, ordered)
+	groupOf, groupCount := sliverGroups(pending, heights, normals, tolerance, smoothCos, edgesOf, ordered)
+	thin := thinGroups(groupOf, groupCount, areas, tolerance, edgesOf, ordered)
+	gaps := pending[:0]
+	for _, index := range pending {
+		if thin[groupOf[index]] {
+			gaps = append(gaps, index)
+			continue
+		}
+		solid[index] = true
+	}
+	pending = gaps
 	adopted := append([]Vec(nil), normals...)
 	for len(pending) > 0 {
 		type adoption struct {
@@ -208,7 +224,7 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 		}
 		pending = rest
 	}
-	// A group the reach did not cover is too wide to be a gap, so none of its
+	// A gap the reach did not cover is not a gap after all, so none of its
 	// slivers keeps an adopted normal.
 	if len(pending) == 0 {
 		return adopted
@@ -225,16 +241,47 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 	return adopted
 }
 
-// sliverGroupCos is the cosine of the angle within which two slivers that
-// share an edge belong to the same group.
-var sliverGroupCos = math.Cos(15 * math.Pi / 180)
+// thinGroups reports for every group whether it is thinner than tolerance. A
+// group's width is twice its area over the length of its boundary, which for a
+// strip is the strip's width and for a face is much more. A group with no
+// boundary, such as a closed surface, is not thin.
+func thinGroups(groupOf []int, groupCount int, areas []float64, tolerance float64, edgesOf [][3]int,
+	ordered []edgeRecord) []bool {
+	area := make([]float64, groupCount)
+	boundary := make([]float64, groupCount)
+	for index, group := range groupOf {
+		if group < 0 {
+			continue
+		}
+		area[group] += areas[index]
+		for _, recordIndex := range edgesOf[index] {
+			record := &ordered[recordIndex]
+			if record.faces == 2 {
+				other := record.tris[0]
+				if other == index {
+					other = record.tris[1]
+				}
+				if groupOf[other] == group {
+					continue
+				}
+			}
+			boundary[group] += record.a.Sub(record.b).Len()
+		}
+	}
+	thin := make([]bool, groupCount)
+	for group := range thin {
+		thin[group] = boundary[group] > 0 && 2*area[group]/boundary[group] < tolerance
+	}
+	return thin
+}
 
 // sliverGroups numbers the groups of slivers that are joined to one another by
-// shared edges across which their normals turn by less than 15 degrees. A thin
-// step cut into a face stays apart from the face's own needle-shaped triangles
-// and forms a group of its own. It returns the group of every triangle, -1 for
+// shared edges across which their normals turn by less than the crease angle,
+// that is, whose shared edge is no crease. A thin step cut into a face stays
+// apart from the face's own needle-shaped triangles and forms a group of its
+// own. It returns the group of every triangle, -1 for
 // a triangle that is not a sliver, and the number of groups.
-func sliverGroups(slivers []int, heights []float64, normals []Vec, tolerance float64, edgesOf [][3]int,
+func sliverGroups(slivers []int, heights []float64, normals []Vec, tolerance, smoothCos float64, edgesOf [][3]int,
 	ordered []edgeRecord) ([]int, int) {
 	groupOf := make([]int, len(heights))
 	for index := range groupOf {
@@ -263,7 +310,7 @@ func sliverGroups(slivers []int, heights []float64, normals []Vec, tolerance flo
 				if groupOf[other] >= 0 || heights[other] >= tolerance || heights[other] == 0 {
 					continue
 				}
-				if normals[index].Dot(normals[other]) < sliverGroupCos {
+				if normals[index].Dot(normals[other]) <= smoothCos {
 					continue
 				}
 				groupOf[other] = count
@@ -277,7 +324,7 @@ func sliverGroups(slivers []int, heights []float64, normals []Vec, tolerance flo
 
 // buildEdgeRecords collects the edges of a mesh. A positive tolerance applies
 // Edges.Tolerance.
-func buildEdgeRecords(vertices []Vec, triangles [][3]int, normals []Vec, tolerance float64) []edgeRecord {
+func buildEdgeRecords(vertices []Vec, triangles [][3]int, normals []Vec, tolerance, smoothCos float64) []edgeRecord {
 	// Resolve welded positions once per vertex. Edge lookups then use small
 	// integer keys instead of hashing six coordinates for every triangle edge.
 	weldedIDs := make(map[weldedVec]int, len(vertices))
@@ -331,7 +378,7 @@ func buildEdgeRecords(vertices []Vec, triangles [][3]int, normals []Vec, toleran
 		}
 	}
 	if tolerance > 0 {
-		adopted := sliverNormals(vertices, triangles, normals, edgesOf, ordered, tolerance)
+		adopted := sliverNormals(vertices, triangles, normals, edgesOf, ordered, tolerance, smoothCos)
 		for index := range ordered {
 			record := &ordered[index]
 			for side := range min(record.faces, len(record.normals)) {
