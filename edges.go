@@ -135,11 +135,12 @@ func edgeTolerance(setting float64, v view, vertices []Vec) float64 {
 //
 // A chain of slivers adopts from the end that reaches a tall triangle, one
 // step a pass, but only while the widths of the slivers in the chain add up to
-// less than tolerance. Slivers that share edges form a group, and a group
-// adopts as a whole or not at all. A flat face drawn as a fan of long thin
-// triangles is wider than tolerance, so the reach stops short of its far side
-// and the whole fan keeps its own normals, which leaves its creases where they
-// are.
+// less than tolerance. Slivers that share edges and face nearly the same way
+// form a group, and a group adopts as a whole or not at all. A flat face drawn
+// as a fan of long thin triangles is wider than tolerance, so the reach stops
+// short of its far side and the whole fan keeps its own normals, which leaves
+// its creases where they are. A thin step beside the fan faces another way, so
+// it is a group of its own and takes the normal of the face it borders.
 func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf [][3]int, ordered []edgeRecord,
 	tolerance float64) []Vec {
 	heights := make([]float64, len(triangles))
@@ -161,7 +162,7 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 		}
 		pending = append(pending, index)
 	}
-	groupOf, groupCount := sliverGroups(pending, heights, tolerance, edgesOf, ordered)
+	groupOf, groupCount := sliverGroups(pending, heights, normals, tolerance, edgesOf, ordered)
 	adopted := append([]Vec(nil), normals...)
 	for len(pending) > 0 {
 		type adoption struct {
@@ -224,10 +225,16 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 	return adopted
 }
 
+// sliverGroupCos is the cosine of the angle within which two slivers that
+// share an edge belong to the same group.
+var sliverGroupCos = math.Cos(15 * math.Pi / 180)
+
 // sliverGroups numbers the groups of slivers that are joined to one another by
-// shared edges. It returns the group of every triangle, -1 for a triangle that
-// is not a sliver, and the number of groups.
-func sliverGroups(slivers []int, heights []float64, tolerance float64, edgesOf [][3]int,
+// shared edges across which their normals turn by less than 15 degrees. A thin
+// step cut into a face stays apart from the face's own needle-shaped triangles
+// and forms a group of its own. It returns the group of every triangle, -1 for
+// a triangle that is not a sliver, and the number of groups.
+func sliverGroups(slivers []int, heights []float64, normals []Vec, tolerance float64, edgesOf [][3]int,
 	ordered []edgeRecord) ([]int, int) {
 	groupOf := make([]int, len(heights))
 	for index := range groupOf {
@@ -254,6 +261,9 @@ func sliverGroups(slivers []int, heights []float64, tolerance float64, edgesOf [
 					other = record.tris[1]
 				}
 				if groupOf[other] >= 0 || heights[other] >= tolerance || heights[other] == 0 {
+					continue
+				}
+				if normals[index].Dot(normals[other]) < sliverGroupCos {
 					continue
 				}
 				groupOf[other] = count
