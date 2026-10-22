@@ -42,7 +42,9 @@ tessellated curve keeps its outline without turning into a grid of facets. A
 negative `CreaseAngle` draws every shared edge, which gives a full wireframe.
 A facet narrower than half a pixel at the model's distance does not turn its
 neighbours' shared edge into a crease, so the gaps and slivers a CAD kernel
-leaves between smooth faces draw no line. Set `Edges.Tolerance` to a length in
+leaves between smooth faces draw no line. A face built from many such facets,
+such as a flat flank cut into long needles, is wider than half a pixel as a
+whole, so it keeps its own creases. Set `Edges.Tolerance` to a length in
 millimetres to change that width, or to `solidlens.Exact` to draw the mesh as it
 is.
 

@@ -25,10 +25,12 @@ type Edges struct {
 	// Tolerance is the length in millimetres below which a feature of the
 	// mesh is not worth a line. A facet narrower than it takes the normal of
 	// the facet it borders, so a sliver between two smooth faces does not
-	// turn their shared edge into a crease. The zero value picks half the
-	// size of one pixel at the model's distance from the camera, so what
-	// cannot be seen does not show. A negative value, such as Exact, draws
-	// the mesh as it is.
+	// turn their shared edge into a crease. Facets that touch one another
+	// take a normal only when together they are narrower than Tolerance, so a
+	// face built from many long thin facets keeps its own creases. The zero
+	// value picks half the size of one pixel at the model's distance from the
+	// camera, so what cannot be seen does not show. A negative value, such as
+	// Exact, draws the mesh as it is.
 	Tolerance float64
 }
 
@@ -127,12 +129,24 @@ func edgeTolerance(setting float64, v view, vertices []Vec) float64 {
 
 // sliverNormals returns the normal each triangle takes for the crease test.
 // A triangle whose smallest height, its area over its longest side, is below
-// tolerance adopts the normal of the tallest triangle it shares an edge with.
-// A chain of slivers takes its normal from the end that reaches a tall
-// triangle, one step a pass.
+// tolerance is a sliver. It adopts the normal of the tallest solid triangle it
+// shares an edge with, so a gap between two faces does not add a crease of its
+// own. A solid triangle is a tall one or a sliver that has already adopted.
+//
+// A chain of slivers adopts from the end that reaches a tall triangle, one
+// step a pass, but only while the widths of the slivers in the chain add up to
+// less than tolerance. Slivers that share edges form a group, and a group
+// adopts as a whole or not at all. A flat face drawn as a fan of long thin
+// triangles is wider than tolerance, so the reach stops short of its far side
+// and the whole fan keeps its own normals, which leaves its creases where they
+// are.
 func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf [][3]int, ordered []edgeRecord,
 	tolerance float64) []Vec {
 	heights := make([]float64, len(triangles))
+	// reach is the combined width of the slivers between a solid triangle and
+	// the tall triangle its normal came from. It is zero for a tall triangle.
+	reach := make([]float64, len(triangles))
+	solid := make([]bool, len(triangles))
 	pending := make([]int, 0)
 	for index, triangle := range triangles {
 		if normals[index] == (Vec{}) {
@@ -141,10 +155,13 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 		a, b, c := vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]
 		longest := math.Max(b.Sub(a).Len(), math.Max(c.Sub(b).Len(), a.Sub(c).Len()))
 		heights[index] = b.Sub(a).Cross(c.Sub(a)).Len() / longest
-		if heights[index] < tolerance {
-			pending = append(pending, index)
+		if heights[index] >= tolerance {
+			solid[index] = true
+			continue
 		}
+		pending = append(pending, index)
 	}
+	groupOf, groupCount := sliverGroups(pending, heights, tolerance, edgesOf, ordered)
 	adopted := append([]Vec(nil), normals...)
 	for len(pending) > 0 {
 		type adoption struct {
@@ -153,7 +170,7 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 		var chosen []adoption
 		var rest []int
 		for _, index := range pending {
-			best, bestHeight := -1, 0.0
+			best, bestReach := -1, 0.0
 			for _, recordIndex := range edgesOf[index] {
 				record := &ordered[recordIndex]
 				if record.faces != 2 {
@@ -163,8 +180,15 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 				if other == index {
 					other = record.tris[1]
 				}
-				if heights[other] >= tolerance && heights[other] > bestHeight {
-					best, bestHeight = other, heights[other]
+				if !solid[other] {
+					continue
+				}
+				total := reach[other] + heights[index]
+				if total >= tolerance {
+					continue
+				}
+				if best < 0 || total < bestReach || (total == bestReach && heights[other] > heights[best]) {
+					best, bestReach = other, total
 				}
 			}
 			if best < 0 {
@@ -178,13 +202,67 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 		}
 		for _, a := range chosen {
 			adopted[a.triangle] = adopted[a.from]
-			// A triangle that has adopted a normal is solid for the next
-			// pass, but it never outranks a triangle tall enough on its own.
-			heights[a.triangle] = tolerance
+			solid[a.triangle] = true
+			reach[a.triangle] = reach[a.from] + heights[a.triangle]
 		}
 		pending = rest
 	}
+	// A group the reach did not cover is too wide to be a gap, so none of its
+	// slivers keeps an adopted normal.
+	if len(pending) == 0 {
+		return adopted
+	}
+	uncovered := make([]bool, groupCount)
+	for _, index := range pending {
+		uncovered[groupOf[index]] = true
+	}
+	for index, group := range groupOf {
+		if group >= 0 && uncovered[group] {
+			adopted[index] = normals[index]
+		}
+	}
 	return adopted
+}
+
+// sliverGroups numbers the groups of slivers that are joined to one another by
+// shared edges. It returns the group of every triangle, -1 for a triangle that
+// is not a sliver, and the number of groups.
+func sliverGroups(slivers []int, heights []float64, tolerance float64, edgesOf [][3]int,
+	ordered []edgeRecord) ([]int, int) {
+	groupOf := make([]int, len(heights))
+	for index := range groupOf {
+		groupOf[index] = -1
+	}
+	count := 0
+	var stack []int
+	for _, start := range slivers {
+		if groupOf[start] >= 0 {
+			continue
+		}
+		groupOf[start] = count
+		stack = append(stack[:0], start)
+		for len(stack) > 0 {
+			index := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for _, recordIndex := range edgesOf[index] {
+				record := &ordered[recordIndex]
+				if record.faces != 2 {
+					continue
+				}
+				other := record.tris[0]
+				if other == index {
+					other = record.tris[1]
+				}
+				if groupOf[other] >= 0 || heights[other] >= tolerance || heights[other] == 0 {
+					continue
+				}
+				groupOf[other] = count
+				stack = append(stack, other)
+			}
+		}
+		count++
+	}
+	return groupOf, count
 }
 
 // buildEdgeRecords collects the edges of a mesh. A positive tolerance applies

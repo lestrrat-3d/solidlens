@@ -266,6 +266,84 @@ func slivered(t *testing.T) *solidlens.Mesh {
 	return mesh
 }
 
+// fanned returns a ramp made of three faces. A flat plate on the left meets a
+// slope at x = 0 in a 45 degree crease. The slope's first half millimetre is a
+// fan of 25 strips, each 0.02 mm wide and 20 mm long, and a pair of large
+// triangles continues the same plane beyond it. The strips are slivers one by
+// one, but together they are a face wider than a pixel, so the only crease is
+// at x = 0. A sliver that took the normal of the large triangle on either side
+// would leave a crease where the two meet in the middle of the fan.
+func fanned(t *testing.T) *solidlens.Mesh {
+	t.Helper()
+	const strips = 25
+	const step = 0.02
+	var vertices []solidlens.Vec
+	var triangles [][3]int
+	addColumn := func(x, z float64) int {
+		vertices = append(vertices, solidlens.Vec{X: x, Y: -10, Z: z}, solidlens.Vec{X: x, Y: 10, Z: z})
+		return len(vertices) - 2
+	}
+	addQuad := func(left, right int) {
+		triangles = append(triangles, [3]int{left, right, right + 1}, [3]int{left, right + 1, left + 1})
+	}
+	plate := addColumn(-10, 0)
+	previous := addColumn(0, 0)
+	addQuad(plate, previous)
+	for i := 1; i <= strips; i++ {
+		next := addColumn(float64(i)*step, float64(i)*step)
+		addQuad(previous, next)
+		previous = next
+	}
+	far := addColumn(10.5, 10.5)
+	addQuad(previous, far)
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+func TestEdgesToleranceKeepsFaceOfNarrowFacets(t *testing.T) {
+	t.Parallel()
+
+	// redIn counts edge pixels in the columns from first up to, not including, last.
+	redIn := func(t *testing.T, first, last int) int {
+		t.Helper()
+		scene := solidlens.Scene{
+			Camera: solidlens.Camera{Position: solidlens.Vec{Z: 60}, Up: solidlens.Vec{Y: 1}},
+			Models: []solidlens.Model{{
+				Mesh:     fanned(t),
+				Material: solidlens.Matte(solidlens.RGB(0.9, 0.9, 0.9)),
+				Edges:    solidlens.Edges{Enabled: true, Color: solidlens.RGB(1, 0, 0)},
+			}},
+			DirectionalLights: []solidlens.DirectionalLight{{
+				Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+			}},
+			Background: solidlens.RGB(0, 0, 0.5),
+		}
+		img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 600, Height: 600})
+		require.NoError(t, err)
+		count := 0
+		for y := 240; y < 360; y++ {
+			for x := first; x < last; x++ {
+				if redPixel(img.RGBAAt(x, y)) {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	// The image is 12 pixels to the millimetre, so x = 0 is column 300 and the
+	// fan covers columns 300 to 306.
+	t.Run("the crease where the slope meets the plate is drawn", func(t *testing.T) {
+		t.Parallel()
+		require.Positive(t, redIn(t, 296, 304))
+	})
+	t.Run("the fan draws no crease inside its face", func(t *testing.T) {
+		t.Parallel()
+		require.Zero(t, redIn(t, 302, 312))
+	})
+}
+
 func TestEdgesTolerance(t *testing.T) {
 	t.Parallel()
 
