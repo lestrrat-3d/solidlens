@@ -532,6 +532,98 @@ func TestEdgesToleranceKeepsWideFanBesideTallFacets(t *testing.T) {
 	require.Equal(t, lines(t, solidlens.Exact), lines(t, 0.1))
 }
 
+// cornered returns a plate whose edge at x = 0 is lined with 53 vertices 0.19 mm
+// apart. Rising from that edge are three slopes: a steep one on each side and a
+// shallow one in the middle that is a fan of eight wedges sharing an apex 1.5 mm
+// away. Each wedge is a sliver 0.19 mm wide at the plate and a point at its
+// apex. Every pair of neighbouring faces meets at 30 degrees or more, so each
+// has a crease between it and the next. The plate is a fan of slivers too.
+func cornered(t *testing.T) *solidlens.Mesh {
+	t.Helper()
+	const step = 0.19
+	const rimCount = 53
+	var vertices []solidlens.Vec
+	for j := range rimCount {
+		vertices = append(vertices, solidlens.Vec{Y: -5 + float64(j)*step})
+	}
+	plate := len(vertices)
+	vertices = append(vertices, solidlens.Vec{X: -10})
+	// A point 1.5 mm from the rim along a slope that rises at the given angle,
+	// opposite rim vertex j.
+	apexAt := func(j int, degrees float64) int {
+		angle := degrees * math.Pi / 180
+		vertices = append(vertices, solidlens.Vec{
+			X: 1.5 * math.Cos(angle), Y: vertices[j].Y, Z: 1.5 * math.Sin(angle),
+		})
+		return len(vertices) - 1
+	}
+	const first, last = 22, 30
+	left := apexAt(12, 80)
+	middle := apexAt(26, 40)
+	right := apexAt(40, 80)
+	var triangles [][3]int
+	for j := range rimCount - 1 {
+		triangles = append(triangles, [3]int{plate, j, j + 1})
+	}
+	for j := range rimCount - 1 {
+		switch {
+		case j < first:
+			triangles = append(triangles, [3]int{j, j + 1, left})
+		case j < last:
+			triangles = append(triangles, [3]int{j, j + 1, middle})
+		default:
+			triangles = append(triangles, [3]int{j, j + 1, right})
+		}
+	}
+	// The gaps between the fans' apexes.
+	triangles = append(triangles, [3]int{first, left, middle}, [3]int{last, middle, right})
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+func TestEdgesToleranceKeepsCreaseAtShortEndOfThinFan(t *testing.T) {
+	t.Parallel()
+
+	lines := func(t *testing.T, tolerance float64) int {
+		t.Helper()
+		scene := solidlens.Scene{
+			Camera: solidlens.Camera{
+				Position: solidlens.Vec{X: -4, Y: 0, Z: 30}, Target: solidlens.Vec{X: 0, Y: 0}, Up: solidlens.Vec{Y: 1},
+			},
+			Models: []solidlens.Model{{
+				Mesh:     cornered(t),
+				Material: solidlens.Matte(solidlens.RGB(0.9, 0.9, 0.9)),
+				Edges:    solidlens.Edges{Enabled: true, Color: solidlens.RGB(1, 0, 0), Tolerance: tolerance},
+			}},
+			DirectionalLights: []solidlens.DirectionalLight{{
+				Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+			}},
+			Background: solidlens.RGB(0, 0, 0.5),
+		}
+		img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 600, Height: 600})
+		require.NoError(t, err)
+		// The image is 24 pixels to the millimetre. The window holds the plate's
+		// edge under the middle fan, from y = -0.82 to y = 0.70 at x = 0, and
+		// stops short of the fan's ends.
+		count := 0
+		for y := 287; y < 316; y++ {
+			for x := 297; x < 304; x++ {
+				if redPixel(img.RGBAAt(x, y)) {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	// Each wedge of the middle fan touches the plate along its short side.
+	// Taking the plate's normal would move the crease 1.5 mm to the apex and
+	// leave no line along the plate.
+	require.Positive(t, lines(t, solidlens.Exact))
+	require.Equal(t, lines(t, solidlens.Exact), lines(t, 0.7))
+}
+
 func TestEdgesTolerance(t *testing.T) {
 	t.Parallel()
 

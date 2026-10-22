@@ -142,9 +142,11 @@ func edgeTolerance(setting float64, v view, vertices []Vec) float64 {
 // borders.
 //
 // A chain of slivers in a gap adopts from the end that reaches a solid
-// triangle, one step a pass, but only while the widths of the slivers in the
-// chain add up to less than tolerance, and a gap adopts as a whole or not at
-// all.
+// triangle, one step a pass. A sliver adopts across an edge only if its far
+// corner lies within tolerance of that edge, since adopting moves the crease
+// that far, and the distances along a chain add up to less than tolerance. A
+// thin wedge that meets a face at its short end does not adopt through it. A
+// gap adopts as a whole or not at all.
 func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf [][3]int, ordered []edgeRecord,
 	tolerance, smoothCos float64) []Vec {
 	heights := make([]float64, len(triangles))
@@ -183,6 +185,7 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 	for len(pending) > 0 {
 		type adoption struct {
 			triangle, from int
+			reach          float64
 		}
 		var chosen []adoption
 		var rest []int
@@ -200,7 +203,13 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 				if !solid[other] {
 					continue
 				}
-				total := reach[other] + heights[index]
+				// Adopting across this edge moves the crease from the edge to the
+				// far side of the triangle, which is as far as its corner lies from it.
+				edgeLength := record.a.Sub(record.b).Len()
+				if edgeLength == 0 {
+					continue
+				}
+				total := reach[other] + 2*areas[index]/edgeLength
 				if total >= tolerance {
 					continue
 				}
@@ -212,7 +221,7 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 				rest = append(rest, index)
 				continue
 			}
-			chosen = append(chosen, adoption{triangle: index, from: best})
+			chosen = append(chosen, adoption{triangle: index, from: best, reach: bestReach})
 		}
 		if len(chosen) == 0 {
 			break
@@ -220,7 +229,7 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 		for _, a := range chosen {
 			adopted[a.triangle] = adopted[a.from]
 			solid[a.triangle] = true
-			reach[a.triangle] = reach[a.from] + heights[a.triangle]
+			reach[a.triangle] = a.reach
 		}
 		pending = rest
 	}
