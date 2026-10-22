@@ -27,7 +27,9 @@ type Edges struct {
 	// the facet it borders, so a sliver between two smooth faces does not
 	// turn their shared edge into a crease. Facets that touch one another
 	// take a normal only when together they are narrower than Tolerance, so a
-	// face built from many long thin facets keeps its own creases. The zero
+	// face built from many long thin facets keeps its own creases. Thin facets
+	// that continue the face of a larger facet beside them, with no crease
+	// between the two, stay part of that face. The zero
 	// value picks half the size of one pixel at the model's distance from the
 	// camera, so what cannot be seen does not show. A negative value, such as
 	// Exact, draws the mesh as it is.
@@ -141,6 +143,9 @@ func edgeTolerance(setting float64, v view, vertices []Vec) float64 {
 // another way, so it is a group of its own and takes the normal of the face it
 // borders.
 //
+// A group that shares an edge that is no crease with a tall triangle is part of
+// that triangle's face, so it is not a gap whatever its width.
+//
 // A chain of slivers in a gap adopts from the end that reaches a solid
 // triangle, one step a pass, but only while the widths of the slivers in the
 // chain add up to less than tolerance, and a gap adopts as a whole or not at
@@ -170,9 +175,10 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 	}
 	groupOf, groupCount := sliverGroups(pending, heights, normals, tolerance, smoothCos, edgesOf, ordered)
 	thin := thinGroups(groupOf, groupCount, areas, tolerance, edgesOf, ordered)
+	attached := attachedGroups(groupOf, groupCount, solid, normals, smoothCos, edgesOf, ordered)
 	gaps := pending[:0]
 	for _, index := range pending {
-		if thin[groupOf[index]] {
+		if thin[groupOf[index]] && !attached[groupOf[index]] {
 			gaps = append(gaps, index)
 			continue
 		}
@@ -239,6 +245,36 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 		}
 	}
 	return adopted
+}
+
+// attachedGroups reports for every group whether one of its slivers shares an
+// edge that is no crease with a solid triangle. Such a group continues the
+// face of that triangle, however thin it is, so it is no gap between faces and
+// keeps its own normals. Taking the normal of a face on its other side instead
+// would put a crease on every edge between it and the face it belongs to.
+func attachedGroups(groupOf []int, groupCount int, solid []bool, normals []Vec, smoothCos float64,
+	edgesOf [][3]int, ordered []edgeRecord) []bool {
+	attached := make([]bool, groupCount)
+	for index, group := range groupOf {
+		if group < 0 || attached[group] {
+			continue
+		}
+		for _, recordIndex := range edgesOf[index] {
+			record := &ordered[recordIndex]
+			if record.faces != 2 {
+				continue
+			}
+			other := record.tris[0]
+			if other == index {
+				other = record.tris[1]
+			}
+			if solid[other] && normals[index].Dot(normals[other]) > smoothCos {
+				attached[group] = true
+				break
+			}
+		}
+	}
+	return attached
 }
 
 // thinGroups reports for every group whether it is thinner than tolerance. A
