@@ -29,22 +29,39 @@ type Mesh struct {
 type meshCache struct {
 	edgesOnce sync.Once
 	edges     []edgeRecord
+	// tolerant holds the edge records of the last tolerance they were asked for.
+	tolerant atomic.Pointer[tolerantEdges]
 	// Each pointer holds one immutable result and is replaced when its key changes.
 	render   atomic.Pointer[meshRenderCache]
 	coverage atomic.Pointer[edgeCoverageCache]
 }
 
-func (m *Mesh) cachedEdgeRecords() []edgeRecord {
+type tolerantEdges struct {
+	tolerance float64
+	records   []edgeRecord
+}
+
+// cachedEdgeRecords returns the mesh's edge records for an Edges.Tolerance
+// already resolved to a length, which is zero for none.
+func (m *Mesh) cachedEdgeRecords(tolerance float64) []edgeRecord {
 	if m.cache == nil {
-		return m.buildEdgeRecords()
+		return m.buildEdgeRecords(tolerance)
+	}
+	if tolerance > 0 {
+		if cached := m.cache.tolerant.Load(); cached != nil && cached.tolerance == tolerance {
+			return cached.records
+		}
+		records := m.buildEdgeRecords(tolerance)
+		m.cache.tolerant.Store(&tolerantEdges{tolerance: tolerance, records: records})
+		return records
 	}
 	m.cache.edgesOnce.Do(func() {
-		m.cache.edges = m.buildEdgeRecords()
+		m.cache.edges = m.buildEdgeRecords(0)
 	})
 	return m.cache.edges
 }
 
-func (m *Mesh) buildEdgeRecords() []edgeRecord {
+func (m *Mesh) buildEdgeRecords(tolerance float64) []edgeRecord {
 	normals := make([]Vec, len(m.triangles))
 	for index, triangle := range m.triangles {
 		corners := [3]Vec{
@@ -55,7 +72,7 @@ func (m *Mesh) buildEdgeRecords() []edgeRecord {
 			normals[index] = normal
 		}
 	}
-	return buildEdgeRecords(m.vertices, m.triangles, normals)
+	return buildEdgeRecords(m.vertices, m.triangles, normals, tolerance)
 }
 
 // NewMesh copies and validates indexed triangle geometry.

@@ -140,14 +140,16 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 			if err != nil {
 				return nil, fmt.Errorf("solidlens: model %d: %w", modelIndex, err)
 			}
+			tolerance := edgeTolerance(edges.Tolerance, view, vertices)
 			var records []edgeRecord
 			if isMesh {
-				records = mesh.cachedEdgeRecords()
+				records = mesh.cachedEdgeRecords(tolerance)
 			} else {
-				records = buildEdgeRecords(vertices, triangles, edgeNormals)
+				records = buildEdgeRecords(vertices, triangles, edgeNormals, tolerance)
 			}
 			edgeGroups = append(edgeGroups, edgeGroup{
 				style:     edges,
+				tolerance: tolerance,
 				records:   records,
 				projected: projectedVertices,
 				mesh:      mesh,
@@ -167,7 +169,7 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 			if cacheCoverage {
 				coverageKey = edgeCoverageKey{
 					camera: camera, settings: settings,
-					width: group.style.Width, creaseAngle: group.style.CreaseAngle,
+					width: group.style.Width, creaseAngle: group.style.CreaseAngle, tolerance: group.tolerance,
 				}
 				if cached := group.mesh.cache.coverage.Load(); cached != nil && cached.key == coverageKey {
 					if err := ctx.Err(); err != nil {
@@ -335,6 +337,8 @@ const edgeDepthBias = 1e-3
 // edgeGroup is one model's edge lines. They share a style, so they can be
 // accumulated together and composited in a single pass.
 type edgeGroup struct {
+	// tolerance is the resolved Edges.Tolerance, zero for none.
+	tolerance float64
 	style     Edges
 	records   []edgeRecord
 	projected []screenVertex

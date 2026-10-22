@@ -43,12 +43,13 @@ type meshRenderCache struct {
 }
 
 type edgeCoverageKey struct {
-	// Coverage depends on geometry, view, width, and crease angle. Color and
+	// Coverage depends on geometry, view, width, crease angle, and tolerance. Color and
 	// material are applied after coverage is calculated.
 	camera      Camera
 	settings    Settings
 	width       float64
 	creaseAngle float64
+	tolerance   float64
 }
 
 type edgeCoverageCache struct {

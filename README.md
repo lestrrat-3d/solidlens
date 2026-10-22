@@ -1,7 +1,7 @@
 # solidlens
 
 <p align="center">
-  <img src="docs/images/hero.png" alt="The solidlens title above a floating voxel island with houses, trees, a bridge, and a waterfall" width="900">
+  <img src="docs/images/hero.png" alt="A cyan torus, violet block, and coral cylinder rendered by solidlens against a deep navy background" width="900">
 </p>
 
 `solidlens` is a pure-Go, headless raster renderer for triangle meshes. It
@@ -40,6 +40,12 @@ it borders the mesh, when the two faces meeting there differ by at least
 `CreaseAngle` degrees, or when it lies on the model's silhouette, so a
 tessellated curve keeps its outline without turning into a grid of facets. A
 negative `CreaseAngle` draws every shared edge, which gives a full wireframe.
+A facet narrower than half a pixel at the model's distance does not turn its
+neighbours' shared edge into a crease, so the gaps and slivers a CAD kernel
+leaves between smooth faces draw no line. Set `Edges.Tolerance` to a length in
+millimetres to change that width, or to `solidlens.Exact` to draw the mesh as it
+is.
+
 Edges are drawn after every model's surface, so they stay hidden behind
 nearer bodies.
 
