@@ -190,3 +190,49 @@ func TestRenderSharedTriangleEdgeHasNoGaps(t *testing.T) {
 		require.Equal(t, uint8(255), image.RGBAAt(pixel, pixel).R, "shared edge pixel %d", pixel)
 	}
 }
+
+// TestRenderDepthIsPerspectiveCorrect lays a red plate of small triangles 0.2 mm
+// under a green plate of two large triangles and views them at a slant from
+// close by. The green plate is nearer along every ray, so no red may show. A
+// depth interpolated linearly across the screen would put the middle of each
+// large triangle several millimetres too far away.
+func TestRenderDepthIsPerspectiveCorrect(t *testing.T) {
+	t.Parallel()
+
+	plate := func(t *testing.T, half float64, cells int, z float64) *solidlens.Mesh {
+		t.Helper()
+		var vertices []solidlens.Vec
+		var triangles [][3]int
+		step := 2 * half / float64(cells)
+		for j := 0; j <= cells; j++ {
+			for i := 0; i <= cells; i++ {
+				vertices = append(vertices, solidlens.Vec{X: -half + float64(i)*step, Y: -half + float64(j)*step, Z: z})
+			}
+		}
+		for j := range cells {
+			for i := range cells {
+				a := j*(cells+1) + i
+				b, c, d := a+1, a+cells+1, a+cells+2
+				triangles = append(triangles, [3]int{a, b, d}, [3]int{a, d, c})
+			}
+		}
+		mesh, err := solidlens.NewMesh(vertices, triangles)
+		require.NoError(t, err)
+		return mesh
+	}
+
+	scene := solidlens.Scene{
+		Camera: solidlens.Camera{Position: solidlens.Vec{Y: -25, Z: 12}, Up: solidlens.Vec{Z: 1}},
+		Models: []solidlens.Model{
+			{Mesh: plate(t, 10, 1, 0), Material: solidlens.Matte(solidlens.RGB(0, 0.9, 0))},
+			{Mesh: plate(t, 8, 16, -0.2), Material: solidlens.Matte(solidlens.RGB(0.9, 0, 0))},
+		},
+		DirectionalLights: []solidlens.DirectionalLight{{
+			Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+		}},
+		Background: solidlens.RGB(0, 0, 0.5),
+	}
+	img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 400, Height: 400})
+	require.NoError(t, err)
+	require.Zero(t, countRed(img))
+}

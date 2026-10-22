@@ -33,10 +33,10 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 	}
 	image := image.NewRGBA(image.Rect(0, 0, settings.Width, settings.Height))
 	fill(image, scene.Background.NRGBA())
+	// depth holds the inverse of the camera-space depth, which varies linearly
+	// across the screen where depth itself does not. Zero means nothing is
+	// drawn there yet, the farthest depth there is.
 	depth := make([]float64, settings.Width*settings.Height)
-	for index := range depth {
-		depth[index] = math.Inf(1)
-	}
 	lights := prepareLighting(scene)
 	var edgeGroups []edgeGroup
 	for modelIndex, model := range scene.Models {
@@ -434,6 +434,7 @@ func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, widt
 		return
 	}
 	stride := canvas.stride
+	inverseA, inverseB := 1/a.z, 1/b.z
 	extent := width/2 + 0.5
 	minX, maxX := a.x, b.x
 	if minX > maxX {
@@ -486,8 +487,8 @@ func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, widt
 					coverage = 1
 				}
 				if coverage > 0 {
-					z := a.z + position*(b.z-a.z)
-					if z <= depth[y*stride+x]*(1+edgeDepthBias) {
+					inverse := inverseA + position*(inverseB-inverseA)
+					if inverse >= depth[y*stride+x]*(1-edgeDepthBias) {
 						canvas.add(x, y, coverage)
 					}
 				}
@@ -607,6 +608,7 @@ func rasterizePixel(image *image.RGBA, depth []float64, triangle [3]screenVertex
 type rasterState struct {
 	minX, maxX, minY, maxY int
 	inverseArea            float64
+	inverseZ               [3]float64
 	rowW0, rowW1, rowW2    float64
 	dx0, dx1, dx2          float64
 	dy0, dy1, dy2          float64
@@ -630,6 +632,7 @@ func newRasterState(width, height int, triangle [3]screenVertex) rasterState {
 	return rasterState{
 		minX: minX, maxX: maxX, minY: minY, maxY: maxY,
 		inverseArea: inverseArea,
+		inverseZ:    [3]float64{1 / triangle[0].z, 1 / triangle[1].z, 1 / triangle[2].z},
 		rowW0:       edge(triangle[1], triangle[2], startX, startY) * inverseArea,
 		rowW1:       edge(triangle[2], triangle[0], startX, startY) * inverseArea,
 		rowW2:       edge(triangle[0], triangle[1], startX, startY) * inverseArea,
@@ -669,9 +672,9 @@ func rasterizePrepared(image *image.RGBA, depth []float64, triangle [3]screenVer
 					continue
 				}
 				index := y*width + x
-				z := pixelW0*triangle[0].z + pixelW1*triangle[1].z + pixelW2*triangle[2].z
-				if z < depth[index] {
-					depth[index] = z
+				inverse := pixelW0*state.inverseZ[0] + pixelW1*state.inverseZ[1] + pixelW2*state.inverseZ[2]
+				if inverse > depth[index] {
+					depth[index] = inverse
 					offset := y*image.Stride + x*4
 					image.Pix[offset] = pixel.R
 					image.Pix[offset+1] = pixel.G
