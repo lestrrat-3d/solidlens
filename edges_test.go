@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"math"
 	"testing"
 
 	"github.com/lestrrat-3d/solidlens"
@@ -244,3 +245,134 @@ func translated(t *testing.T, source solidlens.TriangleSource, offset solidlens.
 	require.NoError(t, err)
 	return mesh
 }
+
+// slivered returns a flat plate whose middle holds a strip a ten-thousandth of
+// a millimetre wide that rises a thousandth, so its facets are slivers tilted
+// 84 degrees from the plate.
+func slivered(t *testing.T) *solidlens.Mesh {
+	t.Helper()
+	vertices := []solidlens.Vec{
+		{X: -10, Y: -10}, {X: 0, Y: -10}, {X: 0, Y: 10}, {X: -10, Y: 10},
+		{X: 1e-4, Y: -10, Z: 1e-3}, {X: 1e-4, Y: 10, Z: 1e-3},
+		{X: 10, Y: -10, Z: 1e-3}, {X: 10, Y: 10, Z: 1e-3},
+	}
+	triangles := [][3]int{
+		{0, 1, 2}, {0, 2, 3},
+		{1, 4, 5}, {1, 5, 2},
+		{4, 6, 7}, {4, 7, 5},
+	}
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+func TestEdgesTolerance(t *testing.T) {
+	t.Parallel()
+
+	// interiorRed counts edge pixels in a window that holds the strip and
+	// stays clear of the plate's border.
+	interiorRed := func(t *testing.T, edges solidlens.Edges) int {
+		t.Helper()
+		scene := solidlens.Scene{
+			Camera: solidlens.Camera{
+				Position: solidlens.Vec{Z: 60},
+				Up:       solidlens.Vec{Y: 1},
+			},
+			Models: []solidlens.Model{{
+				Mesh:     slivered(t),
+				Material: solidlens.Matte(solidlens.RGB(0.9, 0.9, 0.9)),
+				Edges:    edges,
+			}},
+			DirectionalLights: []solidlens.DirectionalLight{{
+				Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+			}},
+			Background: solidlens.RGB(0, 0, 0.5),
+		}
+		img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 600, Height: 600})
+		require.NoError(t, err)
+		count := 0
+		for y := 240; y < 360; y++ {
+			for x := 240; x < 360; x++ {
+				if redPixel(img.RGBAAt(x, y)) {
+					count++
+				}
+			}
+		}
+		return count
+	}
+	red := solidlens.Edges{Enabled: true, Color: solidlens.RGB(1, 0, 0)}
+
+	t.Run("the default hides a sliver narrower than a pixel", func(t *testing.T) {
+		t.Parallel()
+		require.Zero(t, interiorRed(t, red))
+	})
+	t.Run("an explicit tolerance wider than the sliver hides it", func(t *testing.T) {
+		t.Parallel()
+		withTolerance := red
+		withTolerance.Tolerance = 0.01
+		require.Zero(t, interiorRed(t, withTolerance))
+	})
+	t.Run("an explicit tolerance narrower than the sliver draws it", func(t *testing.T) {
+		t.Parallel()
+		withTolerance := red
+		withTolerance.Tolerance = 1e-6
+		require.Positive(t, interiorRed(t, withTolerance))
+	})
+	t.Run("Exact draws the sliver", func(t *testing.T) {
+		t.Parallel()
+		exact := red
+		exact.Tolerance = solidlens.Exact
+		require.Positive(t, interiorRed(t, exact))
+	})
+	t.Run("a source that is not a Mesh gets the same tolerance", func(t *testing.T) {
+		t.Parallel()
+		plate := slivered(t)
+		source := plainSource{vertices: plate.Vertices(), triangles: plate.Triangles()}
+		render := func(edges solidlens.Edges) int {
+			scene := solidlens.Scene{
+				Camera: solidlens.Camera{Position: solidlens.Vec{Z: 60}, Up: solidlens.Vec{Y: 1}},
+				Models: []solidlens.Model{{
+					Mesh: source, Material: solidlens.Matte(solidlens.RGB(0.9, 0.9, 0.9)), Edges: edges,
+				}},
+				DirectionalLights: []solidlens.DirectionalLight{{
+					Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+				}},
+				Background: solidlens.RGB(0, 0, 0.5),
+			}
+			img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 600, Height: 600})
+			require.NoError(t, err)
+			count := 0
+			for y := 240; y < 360; y++ {
+				for x := 240; x < 360; x++ {
+					if redPixel(img.RGBAAt(x, y)) {
+						count++
+					}
+				}
+			}
+			return count
+		}
+		exact := red
+		exact.Tolerance = solidlens.Exact
+		require.Zero(t, render(red))
+		require.Positive(t, render(exact))
+	})
+	t.Run("a tolerance is a finite number", func(t *testing.T) {
+		t.Parallel()
+		bad := red
+		bad.Tolerance = math.NaN()
+		_, err := solidlens.Render(t.Context(), solidlens.Scene{
+			Camera: solidlens.Camera{Position: solidlens.Vec{Z: 60}, Up: solidlens.Vec{Y: 1}},
+			Models: []solidlens.Model{{Mesh: slivered(t), Material: solidlens.Matte(solidlens.RGB(1, 1, 1)), Edges: bad}},
+		}, solidlens.Settings{Width: 10, Height: 10})
+		require.Error(t, err)
+	})
+}
+
+// plainSource is a TriangleSource that is not a *solidlens.Mesh.
+type plainSource struct {
+	vertices  []solidlens.Vec
+	triangles [][3]int
+}
+
+func (s plainSource) Vertices() []solidlens.Vec { return s.vertices }
+func (s plainSource) Triangles() [][3]int       { return s.triangles }
