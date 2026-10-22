@@ -738,6 +738,82 @@ func TestEdgesToleranceKeepsFlatFaceOfNarrowFacetsBesideSlope(t *testing.T) {
 	}
 }
 
+// bent returns a strip along the y axis made of a flat plate in the z = 0 plane
+// that ends at x = 0, three narrow facets of a rounding that turn 20 degrees
+// each, and a plate that continues at 60 degrees below the first. Every edge
+// turns less than the crease angle, but the two plates meet at 60 degrees. The
+// facets are 0.01 mm wide and 20 mm long, so they are slivers.
+func bent(t *testing.T) *solidlens.Mesh {
+	t.Helper()
+	const length = 20.0
+	const width = 0.01
+	var vertices []solidlens.Vec
+	var triangles [][3]int
+	// slopes holds the angle of every strip below the horizontal, in degrees.
+	slopes := []float64{0, 20, 40, 60, 60}
+	lengths := []float64{20, width, width, width, 20}
+	x, z := -20.0, 0.0
+	add := func(x, z float64) (int, int) {
+		vertices = append(vertices, solidlens.Vec{X: x, Y: -length / 2, Z: z}, solidlens.Vec{X: x, Y: length / 2, Z: z})
+		return len(vertices) - 2, len(vertices) - 1
+	}
+	lowPrev, highPrev := add(x, z)
+	for i, slope := range slopes {
+		radians := slope * math.Pi / 180
+		x += lengths[i] * math.Cos(radians)
+		z -= lengths[i] * math.Sin(radians)
+		low, high := add(x, z)
+		// Both triangles of the strip face up and toward the camera.
+		triangles = append(triangles, [3]int{lowPrev, low, high}, [3]int{lowPrev, high, highPrev})
+		lowPrev, highPrev = low, high
+	}
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+func TestEdgesToleranceKeepsCreaseAcrossBentSliverRounding(t *testing.T) {
+	t.Parallel()
+
+	// The image is 12 pixels to the millimetre, so the rounding is at column
+	// 300 and y = 0 is row 300. The window spans the rounding and most of its
+	// length.
+	inside := func(t *testing.T, tolerance float64) int {
+		t.Helper()
+		scene := solidlens.Scene{
+			Camera: solidlens.Camera{Position: solidlens.Vec{Z: 60}, Up: solidlens.Vec{Y: 1}},
+			Models: []solidlens.Model{{
+				Mesh:     bent(t),
+				Material: solidlens.Matte(solidlens.RGB(0.9, 0.9, 0.9)),
+				Edges:    solidlens.Edges{Enabled: true, Color: solidlens.RGB(1, 0, 0), Tolerance: tolerance},
+			}},
+			DirectionalLights: []solidlens.DirectionalLight{{
+				Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+			}},
+			Background: solidlens.RGB(0, 0, 0.5),
+		}
+		img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 600, Height: 600})
+		require.NoError(t, err)
+		count := 0
+		for y := 200; y < 400; y++ {
+			for x := 294; x < 306; x++ {
+				if redPixel(img.RGBAAt(x, y)) {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	// The rounding bends through more than the crease angle, so it belongs to
+	// neither plate. With a tolerance wider than it, the plates' crease is
+	// still drawn once. With none, no edge turns far enough to be drawn.
+	require.Zero(t, inside(t, solidlens.Exact))
+	for _, tolerance := range []float64{0.05, 0.2} {
+		require.Positive(t, inside(t, tolerance), "tolerance %v", tolerance)
+	}
+}
+
 // plainSource is a TriangleSource that is not a *solidlens.Mesh.
 type plainSource struct {
 	vertices  []solidlens.Vec

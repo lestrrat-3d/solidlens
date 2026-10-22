@@ -28,11 +28,10 @@ type Edges struct {
 	// turn their shared edge into a crease. Facets that touch one another
 	// take a normal only when together they are narrower than Tolerance, so a
 	// face built from many long thin facets keeps its own creases. Thin facets
-	// that continue the face of a larger facet beside them, with no crease
-	// between the two, stay part of that face. The zero
-	// value picks half the size of one pixel at the model's distance from the
-	// camera, so what cannot be seen does not show. A negative value, such as
-	// Exact, draws the mesh as it is.
+	// that lie flat against a larger facet beside them stay part of its face.
+	// The zero value picks half the size of one pixel at the model's distance
+	// from the camera, so what cannot be seen does not show. A negative value,
+	// such as Exact, draws the mesh as it is.
 	Tolerance float64
 }
 
@@ -143,8 +142,9 @@ func edgeTolerance(setting float64, v view, vertices []Vec) float64 {
 // another way, so it is a group of its own and takes the normal of the face it
 // borders.
 //
-// A group that shares an edge that is no crease with a tall triangle is part of
-// that triangle's face, so it is not a gap whatever its width.
+// A group that shares an edge that is no crease with a tall triangle and lies
+// flat against it is part of that triangle's face, so it is not a gap whatever
+// its width.
 //
 // A chain of slivers in a gap adopts from the end that reaches a solid
 // triangle, one step a pass, but only while the widths of the slivers in the
@@ -247,18 +247,25 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 	return adopted
 }
 
-// attachedGroups reports for every group whether one of its slivers shares an
-// edge that is no crease with a solid triangle. Such a group continues the
-// face of that triangle, however thin it is, so it is no gap between faces and
-// keeps its own normals. Taking the normal of a face on its other side instead
-// would put a crease on every edge between it and the face it belongs to.
+// attachedGroups reports for every group whether it continues the flat face of
+// a solid triangle: one of its slivers shares an edge that is no crease with
+// that triangle, and no sliver of the group turns away from the triangle's
+// normal by the crease angle or more. Such a group is no gap between faces, so
+// it keeps its own normals. Taking the normal of a face on its other side
+// instead would put a crease on every edge between it and the face it belongs
+// to. A group that bends through more than the crease angle is a thin step or
+// rounding between faces, not part of either, so it stays a gap.
 func attachedGroups(groupOf []int, groupCount int, solid []bool, normals []Vec, smoothCos float64,
 	edgesOf [][3]int, ordered []edgeRecord) []bool {
-	attached := make([]bool, groupCount)
+	// anchors holds the normals of the solid triangles that continue a group
+	// across an edge that is no crease.
+	anchors := make([][]Vec, groupCount)
+	members := make([][]int, groupCount)
 	for index, group := range groupOf {
-		if group < 0 || attached[group] {
+		if group < 0 {
 			continue
 		}
+		members[group] = append(members[group], index)
 		for _, recordIndex := range edgesOf[index] {
 			record := &ordered[recordIndex]
 			if record.faces != 2 {
@@ -269,12 +276,45 @@ func attachedGroups(groupOf []int, groupCount int, solid []bool, normals []Vec, 
 				other = record.tris[1]
 			}
 			if solid[other] && normals[index].Dot(normals[other]) > smoothCos {
+				anchors[group] = addAnchor(anchors[group], normals[other])
+			}
+		}
+	}
+	attached := make([]bool, groupCount)
+	for group, list := range anchors {
+		for _, anchor := range list {
+			flat := true
+			for _, index := range members[group] {
+				if normals[index].Dot(anchor) <= smoothCos {
+					flat = false
+					break
+				}
+			}
+			if flat {
 				attached[group] = true
 				break
 			}
 		}
 	}
 	return attached
+}
+
+// maxAnchors bounds how many distinct normals attachedGroups tries for a group,
+// so that a large group beside many faces costs a bounded amount of work.
+const maxAnchors = 8
+
+// addAnchor appends normal to anchors unless it repeats one already there or
+// there are maxAnchors of them.
+func addAnchor(anchors []Vec, normal Vec) []Vec {
+	if len(anchors) >= maxAnchors {
+		return anchors
+	}
+	for _, anchor := range anchors {
+		if anchor.Dot(normal) > 1-1e-9 {
+			return anchors
+		}
+	}
+	return append(anchors, normal)
 }
 
 // thinGroups reports for every group whether it is thinner than tolerance. A
