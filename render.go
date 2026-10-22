@@ -141,11 +141,14 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 				return nil, fmt.Errorf("solidlens: model %d: %w", modelIndex, err)
 			}
 			tolerance := edgeTolerance(edges.Tolerance, view, vertices)
+			// Faces that meet at less than the crease angle are smooth. A negative
+			// crease angle draws every edge, so no two faces count as smooth.
+			smoothCos := math.Cos(math.Max(edges.CreaseAngle, 0) * math.Pi / 180)
 			var records []edgeRecord
 			if isMesh {
-				records = mesh.cachedEdgeRecords(tolerance)
+				records = mesh.cachedEdgeRecords(tolerance, smoothCos)
 			} else {
-				records = buildEdgeRecords(vertices, triangles, edgeNormals, tolerance)
+				records = buildEdgeRecords(vertices, triangles, edgeNormals, tolerance, smoothCos)
 			}
 			edgeGroups = append(edgeGroups, edgeGroup{
 				style:     edges,

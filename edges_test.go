@@ -411,6 +411,127 @@ func TestEdgesToleranceHidesStepBesideFanOfNarrowFacets(t *testing.T) {
 	require.Zero(t, count)
 }
 
+// curved returns a sheet that leaves a flat plate and bends upward in three
+// strips, each 0.25 mm wide and 20 mm long, turning 20 degrees at every joint. It
+// then runs on as a second flat plate turned 20 degrees further. No joint
+// reaches the default crease angle of 30 degrees, so the sheet is one smooth
+// face.
+func curved(t *testing.T) *solidlens.Mesh {
+	t.Helper()
+	var vertices []solidlens.Vec
+	var triangles [][3]int
+	addColumn := func(x, z float64) int {
+		vertices = append(vertices, solidlens.Vec{X: x, Y: -10, Z: z}, solidlens.Vec{X: x, Y: 10, Z: z})
+		return len(vertices) - 2
+	}
+	addQuad := func(left, right int) {
+		triangles = append(triangles, [3]int{left, right, right + 1}, [3]int{left, right + 1, left + 1})
+	}
+	x, z := 0.0, 0.0
+	previous := addColumn(-10, 0)
+	current := addColumn(x, z)
+	addQuad(previous, current)
+	for turn := 1; turn <= 3; turn++ {
+		angle := float64(turn) * 20 * math.Pi / 180
+		x, z = x+0.25*math.Cos(angle), z+0.25*math.Sin(angle)
+		next := addColumn(x, z)
+		addQuad(current, next)
+		current = next
+	}
+	angle := 80 * math.Pi / 180
+	far := addColumn(x+10*math.Cos(angle), z+10*math.Sin(angle))
+	addQuad(current, far)
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+func TestEdgesToleranceKeepsSmoothFaceOfNarrowFacets(t *testing.T) {
+	t.Parallel()
+
+	// A tolerance wider than every strip makes slivers of them all. The face
+	// is smooth, so the lines it draws are the same with and without it.
+	lines := func(t *testing.T, tolerance float64) int {
+		t.Helper()
+		scene := solidlens.Scene{
+			Camera: solidlens.Camera{Position: solidlens.Vec{X: -3, Y: -5, Z: 40}, Target: solidlens.Vec{X: 1}, Up: solidlens.Vec{Y: 1}},
+			Models: []solidlens.Model{{
+				Mesh:     curved(t),
+				Material: solidlens.Matte(solidlens.RGB(0.9, 0.9, 0.9)),
+				Edges:    solidlens.Edges{Enabled: true, Color: solidlens.RGB(1, 0, 0), Tolerance: tolerance},
+			}},
+			DirectionalLights: []solidlens.DirectionalLight{{
+				Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+			}},
+			Background: solidlens.RGB(0, 0, 0.5),
+		}
+		img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 600, Height: 600})
+		require.NoError(t, err)
+		return countRed(img)
+	}
+
+	require.Equal(t, lines(t, solidlens.Exact), lines(t, 0.6))
+}
+
+// wedged returns a floor of 40 strips, each 0.5 mm wide and 4 mm long, with a
+// ramp rising at 60 degrees along its far edge. The ramp is a fan of triangles
+// that share one distant apex, so each is a sliver whose short side lies on a
+// floor strip's far edge, as a bore's end face touches the strips of its wall.
+// The floor strips are taller than the slivers. The ramp is a face, not a gap,
+// since the fan covers a triangle 20 mm wide.
+func wedged(t *testing.T) *solidlens.Mesh {
+	t.Helper()
+	const strips = 40
+	const width = 0.5
+	var vertices []solidlens.Vec
+	var triangles [][3]int
+	for j := range strips + 1 {
+		y := -10 + float64(j)*width
+		vertices = append(vertices, solidlens.Vec{X: 0, Y: y}, solidlens.Vec{X: 4, Y: y})
+	}
+	for j := range strips {
+		near, far := 2*j, 2*(j+1)
+		triangles = append(triangles, [3]int{near, near + 1, far + 1}, [3]int{near, far + 1, far})
+	}
+	apex := len(vertices)
+	vertices = append(vertices, solidlens.Vec{X: 7, Y: 80, Z: 5})
+	for j := range strips {
+		triangles = append(triangles, [3]int{2*j + 1, apex, 2*(j+1) + 1})
+	}
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+func TestEdgesToleranceKeepsWideFanBesideTallFacets(t *testing.T) {
+	t.Parallel()
+
+	lines := func(t *testing.T, tolerance float64) int {
+		t.Helper()
+		scene := solidlens.Scene{
+			Camera: solidlens.Camera{
+				Position: solidlens.Vec{X: 3, Y: 30, Z: 100}, Target: solidlens.Vec{X: 3, Y: 30}, Up: solidlens.Vec{Y: 1},
+			},
+			Models: []solidlens.Model{{
+				Mesh:     wedged(t),
+				Material: solidlens.Matte(solidlens.RGB(0.9, 0.9, 0.9)),
+				Edges:    solidlens.Edges{Enabled: true, Color: solidlens.RGB(1, 0, 0), Tolerance: tolerance},
+			}},
+			DirectionalLights: []solidlens.DirectionalLight{{
+				Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+			}},
+			Background: solidlens.RGB(0, 0, 0.5),
+		}
+		img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 600, Height: 600})
+		require.NoError(t, err)
+		return countRed(img)
+	}
+
+	// Every sliver of the fan touches a floor strip, yet the fan is a face, so
+	// the crease along the floor's far edge stays whatever the tolerance is.
+	require.Equal(t, lines(t, solidlens.Exact), lines(t, 0.1))
+}
+
 func TestEdgesTolerance(t *testing.T) {
 	t.Parallel()
 

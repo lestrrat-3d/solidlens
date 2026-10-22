@@ -38,30 +38,33 @@ type meshCache struct {
 
 type tolerantEdges struct {
 	tolerance float64
+	smoothCos float64
 	records   []edgeRecord
 }
 
 // cachedEdgeRecords returns the mesh's edge records for an Edges.Tolerance
-// already resolved to a length, which is zero for none.
-func (m *Mesh) cachedEdgeRecords(tolerance float64) []edgeRecord {
+// already resolved to a length, which is zero for none, and the cosine of the
+// angle below which two faces count as smooth.
+func (m *Mesh) cachedEdgeRecords(tolerance, smoothCos float64) []edgeRecord {
 	if m.cache == nil {
-		return m.buildEdgeRecords(tolerance)
+		return m.buildEdgeRecords(tolerance, smoothCos)
 	}
 	if tolerance > 0 {
-		if cached := m.cache.tolerant.Load(); cached != nil && cached.tolerance == tolerance {
+		cached := m.cache.tolerant.Load()
+		if cached != nil && cached.tolerance == tolerance && cached.smoothCos == smoothCos {
 			return cached.records
 		}
-		records := m.buildEdgeRecords(tolerance)
-		m.cache.tolerant.Store(&tolerantEdges{tolerance: tolerance, records: records})
+		records := m.buildEdgeRecords(tolerance, smoothCos)
+		m.cache.tolerant.Store(&tolerantEdges{tolerance: tolerance, smoothCos: smoothCos, records: records})
 		return records
 	}
 	m.cache.edgesOnce.Do(func() {
-		m.cache.edges = m.buildEdgeRecords(0)
+		m.cache.edges = m.buildEdgeRecords(0, smoothCos)
 	})
 	return m.cache.edges
 }
 
-func (m *Mesh) buildEdgeRecords(tolerance float64) []edgeRecord {
+func (m *Mesh) buildEdgeRecords(tolerance, smoothCos float64) []edgeRecord {
 	normals := make([]Vec, len(m.triangles))
 	for index, triangle := range m.triangles {
 		corners := [3]Vec{
@@ -72,7 +75,7 @@ func (m *Mesh) buildEdgeRecords(tolerance float64) []edgeRecord {
 			normals[index] = normal
 		}
 	}
-	return buildEdgeRecords(m.vertices, m.triangles, normals, tolerance)
+	return buildEdgeRecords(m.vertices, m.triangles, normals, tolerance, smoothCos)
 }
 
 // NewMesh copies and validates indexed triangle geometry.
