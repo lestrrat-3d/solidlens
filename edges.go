@@ -29,6 +29,8 @@ type Edges struct {
 	// take a normal only when together they are narrower than Tolerance, so a
 	// face built from many long thin facets keeps its own creases. Thin facets
 	// that lie flat against a larger facet beside them stay part of its face.
+	// Two such facets meet in no edge unless they turn by more than a quarter
+	// beyond CreaseAngle, because a band of slivers steps through a curve.
 	// The zero value picks half the size of one pixel at the model's distance
 	// from the camera, so what cannot be seen does not show. A negative value,
 	// such as Exact, draws the mesh as it is.
@@ -104,6 +106,8 @@ type edgeRecord struct {
 	// point is a position on one of the faces, used for the silhouette test.
 	point Vec
 	faces int
+	// slivers is set when both faces are slivers, see sliverCreaseFactor.
+	slivers bool
 }
 
 // edgeTolerance resolves an Edges.Tolerance to a length. Zero in the result
@@ -151,7 +155,7 @@ func edgeTolerance(setting float64, v view, vertices []Vec) float64 {
 // chain add up to less than tolerance, and a gap adopts as a whole or not at
 // all.
 func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf [][3]int, ordered []edgeRecord,
-	tolerance, smoothCos float64) []Vec {
+	tolerance, smoothCos float64) ([]Vec, []bool) {
 	heights := make([]float64, len(triangles))
 	areas := make([]float64, len(triangles))
 	// reach is the combined width of the slivers between a solid triangle and
@@ -172,6 +176,10 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 			continue
 		}
 		pending = append(pending, index)
+	}
+	isSliver := make([]bool, len(triangles))
+	for _, index := range pending {
+		isSliver[index] = true
 	}
 	groupOf, groupCount := sliverGroups(pending, heights, normals, tolerance, smoothCos, edgesOf, ordered)
 	thin := thinGroups(groupOf, groupCount, areas, tolerance, edgesOf, ordered)
@@ -233,7 +241,7 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 	// A gap the reach did not cover is not a gap after all, so none of its
 	// slivers keeps an adopted normal.
 	if len(pending) == 0 {
-		return adopted
+		return adopted, isSliver
 	}
 	uncovered := make([]bool, groupCount)
 	for _, index := range pending {
@@ -244,7 +252,7 @@ func sliverNormals(vertices []Vec, triangles [][3]int, normals []Vec, edgesOf []
 			adopted[index] = normals[index]
 		}
 	}
-	return adopted
+	return adopted, isSliver
 }
 
 // attachedGroups reports for every group whether it continues the flat face of
@@ -454,9 +462,10 @@ func buildEdgeRecords(vertices []Vec, triangles [][3]int, normals []Vec, toleran
 		}
 	}
 	if tolerance > 0 {
-		adopted := sliverNormals(vertices, triangles, normals, edgesOf, ordered, tolerance, smoothCos)
+		adopted, slivers := sliverNormals(vertices, triangles, normals, edgesOf, ordered, tolerance, smoothCos)
 		for index := range ordered {
 			record := &ordered[index]
+			record.slivers = record.faces == 2 && slivers[record.tris[0]] && slivers[record.tris[1]]
 			for side := range min(record.faces, len(record.normals)) {
 				record.normals[side] = adopted[record.tris[side]]
 			}
@@ -474,7 +483,11 @@ func drawEdge(record *edgeRecord, eye Vec, creaseAngle, creaseCos float64) bool 
 	if creaseAngle < 0 {
 		return true
 	}
-	if record.normals[0].Dot(record.normals[1]) <= creaseCos {
+	dot := record.normals[0].Dot(record.normals[1])
+	if dot <= creaseCos {
+		if record.slivers && dot > sliverCos(creaseAngle) {
+			return false
+		}
 		return true
 	}
 	// A silhouette edge has one face turned toward the camera and one away.
@@ -482,4 +495,16 @@ func drawEdge(record *edgeRecord, eye Vec, creaseAngle, creaseCos float64) bool 
 	front := record.normals[0].Dot(toEye)
 	back := record.normals[1].Dot(toEye)
 	return (front > 0) != (back > 0)
+}
+
+// sliverCreaseFactor scales the crease angle for an edge between two slivers.
+// A band of slivers narrower than Tolerance is the way a mesh turns a curved
+// face, or the seam between faces, in steps. The steps are as large as the
+// mesh needs them to be, so one a little beyond the crease angle is a facet
+// of the curve and not a crease. Only the edges of the band are worth a line,
+// and a sharper step than this scale is still drawn.
+const sliverCreaseFactor = 1.25
+
+func sliverCos(creaseAngle float64) float64 {
+	return math.Cos(math.Min(creaseAngle*sliverCreaseFactor, 180) * math.Pi / 180)
 }

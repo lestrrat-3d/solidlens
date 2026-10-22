@@ -814,6 +814,78 @@ func TestEdgesToleranceKeepsCreaseAcrossBentSliverRounding(t *testing.T) {
 	}
 }
 
+// turnedStrips returns a plate in the z = 0 plane that ends at x = -0.01, a 0.01 mm
+// wide strip beside it in the same plane, a second strip of the same width that
+// turns by the given angle in degrees, and a plate that continues at that
+// angle. Both strips are 20 mm long, so they are slivers, and each lies flat
+// against the plate beside it.
+func turnedStrips(t *testing.T, turn float64) *solidlens.Mesh {
+	t.Helper()
+	const length = 20.0
+	const width = 0.01
+	var vertices []solidlens.Vec
+	var triangles [][3]int
+	slopes := []float64{0, 0, turn, turn}
+	lengths := []float64{20, width, width, 20}
+	x, z := -20.0-width, 0.0
+	add := func(x, z float64) (int, int) {
+		vertices = append(vertices, solidlens.Vec{X: x, Y: -length / 2, Z: z}, solidlens.Vec{X: x, Y: length / 2, Z: z})
+		return len(vertices) - 2, len(vertices) - 1
+	}
+	lowPrev, highPrev := add(x, z)
+	for i, slope := range slopes {
+		radians := slope * math.Pi / 180
+		x += lengths[i] * math.Cos(radians)
+		z -= lengths[i] * math.Sin(radians)
+		low, high := add(x, z)
+		triangles = append(triangles, [3]int{lowPrev, low, high}, [3]int{lowPrev, high, highPrev})
+		lowPrev, highPrev = low, high
+	}
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+func TestEdgesToleranceDropsFacetStepBetweenSlivers(t *testing.T) {
+	t.Parallel()
+
+	// The image is 12 pixels to the millimetre, so the step is at column 300
+	// and y = 0 is row 300. The window spans the step and most of its length.
+	inside := func(t *testing.T, turn, tolerance float64) int {
+		t.Helper()
+		scene := solidlens.Scene{
+			Camera: solidlens.Camera{Position: solidlens.Vec{Z: 60}, Up: solidlens.Vec{Y: 1}},
+			Models: []solidlens.Model{{
+				Mesh:     turnedStrips(t, turn),
+				Material: solidlens.Matte(solidlens.RGB(0.9, 0.9, 0.9)),
+				Edges:    solidlens.Edges{Enabled: true, Color: solidlens.RGB(1, 0, 0), Tolerance: tolerance},
+			}},
+			DirectionalLights: []solidlens.DirectionalLight{{
+				Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+			}},
+			Background: solidlens.RGB(0, 0, 0.5),
+		}
+		img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 600, Height: 600})
+		require.NoError(t, err)
+		count := 0
+		for y := 200; y < 400; y++ {
+			for x := 294; x < 306; x++ {
+				if redPixel(img.RGBAAt(x, y)) {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	// A turn of 35 degrees is a little beyond the crease angle, so with a
+	// tolerance wider than the strips it is a facet of a curve. Without a
+	// tolerance, and for a turn of 50 degrees, it is drawn.
+	require.Zero(t, inside(t, 35, 0.05))
+	require.Positive(t, inside(t, 35, solidlens.Exact))
+	require.Positive(t, inside(t, 50, 0.05))
+}
+
 // plainSource is a TriangleSource that is not a *solidlens.Mesh.
 type plainSource struct {
 	vertices  []solidlens.Vec
