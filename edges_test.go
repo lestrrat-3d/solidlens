@@ -634,6 +634,110 @@ func TestEdgesTolerance(t *testing.T) {
 	})
 }
 
+// chamfered returns a flat plate in the z = 0 plane that ends at x = 0 in a 45
+// degree slope one millimetre long. Along the end of the plate, ten triangles
+// 0.1 mm wide fan out from one point on the plate's side edge, 0.5 mm from the
+// corner. Each is 10 mm long and only 0.005 mm high, so they are slivers, but
+// the slope's triangles that share their 0.1 mm ends are 0.1 mm high. The plate
+// is one flat face whose triangles all have the normal (0, 0, 1), and its only
+// crease is the line at x = 0 where the slope begins.
+func chamfered(t *testing.T) *solidlens.Mesh {
+	t.Helper()
+	const needles = 10
+	const width = 0.1
+	var vertices []solidlens.Vec
+	var triangles [][3]int
+	add := func(v solidlens.Vec) int {
+		vertices = append(vertices, v)
+		return len(vertices) - 1
+	}
+	// addUp adds a triangle wound so that it faces up.
+	addUp := func(a, b, c int) {
+		cross := vertices[b].Sub(vertices[a]).Cross(vertices[c].Sub(vertices[a]))
+		if cross.Z < 0 {
+			b, c = c, b
+		}
+		triangles = append(triangles, [3]int{a, b, c})
+	}
+	apex := add(solidlens.Vec{X: -0.5, Y: -10})
+	cornerLow := add(solidlens.Vec{Y: -10})
+	cornerHigh := add(solidlens.Vec{Y: 10})
+	farLow := add(solidlens.Vec{X: -20, Y: -10})
+	farHigh := add(solidlens.Vec{X: -20, Y: 10})
+	slopeLow := add(solidlens.Vec{X: 1, Y: -10, Z: -1})
+	slopeHigh := add(solidlens.Vec{X: 1, Y: 10, Z: -1})
+	// ends and feet are the needles' ends on the plate and on the slope.
+	var ends, feet []int
+	for k := 0; k <= needles; k++ {
+		y := (float64(k) - needles/2) * width
+		ends = append(ends, add(solidlens.Vec{Y: y}))
+		feet = append(feet, add(solidlens.Vec{X: 1, Y: y, Z: -1}))
+	}
+	last := needles
+	// The plate: the needles and the large triangles around them.
+	for k := range needles {
+		addUp(apex, ends[k], ends[k+1])
+	}
+	addUp(apex, cornerLow, ends[0])
+	addUp(apex, ends[last], cornerHigh)
+	addUp(apex, cornerHigh, farHigh)
+	addUp(apex, farHigh, farLow)
+	// The slope: a pair of triangles on every needle's end, and the large
+	// triangles at either side.
+	for k := range needles {
+		addUp(ends[k], ends[k+1], feet[k+1])
+		addUp(ends[k], feet[k+1], feet[k])
+	}
+	addUp(cornerLow, ends[0], feet[0])
+	addUp(cornerLow, feet[0], slopeLow)
+	addUp(cornerHigh, slopeHigh, feet[last])
+	addUp(cornerHigh, feet[last], ends[last])
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+func TestEdgesToleranceKeepsFlatFaceOfNarrowFacetsBesideSlope(t *testing.T) {
+	t.Parallel()
+
+	// The image is 12 pixels to the millimetre, so the plate's end is at
+	// column 300 and y = 0 is row 300. The window lies on the plate, between
+	// the fan's first edges and the crease, and spans most of the fan's length.
+	inside := func(t *testing.T, tolerance float64) int {
+		t.Helper()
+		scene := solidlens.Scene{
+			Camera: solidlens.Camera{Position: solidlens.Vec{Z: 60}, Up: solidlens.Vec{Y: 1}},
+			Models: []solidlens.Model{{
+				Mesh:     chamfered(t),
+				Material: solidlens.Matte(solidlens.RGB(0.9, 0.9, 0.9)),
+				Edges:    solidlens.Edges{Enabled: true, Color: solidlens.RGB(1, 0, 0), Tolerance: tolerance},
+			}},
+			DirectionalLights: []solidlens.DirectionalLight{{
+				Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+			}},
+			Background: solidlens.RGB(0, 0, 0.5),
+		}
+		img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 600, Height: 600})
+		require.NoError(t, err)
+		count := 0
+		for y := 305; y < 415; y++ {
+			for x := 292; x < 298; x++ {
+				if redPixel(img.RGBAAt(x, y)) {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	// Every triangle of the plate faces the same way, so no line crosses it
+	// whatever the tolerance is. The fan's triangles are slivers with a
+	// tolerance of 0.05 or more, and they must not take the slope's normal.
+	for _, tolerance := range []float64{solidlens.Exact, 0.01, 0.05, 0.2} {
+		require.Zero(t, inside(t, tolerance), "tolerance %v", tolerance)
+	}
+}
+
 // plainSource is a TriangleSource that is not a *solidlens.Mesh.
 type plainSource struct {
 	vertices  []solidlens.Vec
