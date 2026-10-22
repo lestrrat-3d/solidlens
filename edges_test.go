@@ -344,6 +344,73 @@ func TestEdgesToleranceKeepsFaceOfNarrowFacets(t *testing.T) {
 	})
 }
 
+// stepped returns two flat faces at the same angle joined by a step three
+// micrometres high. The left face is a pair of large triangles. The right face
+// is a fan of 250 needle-shaped strips, each 0.02 mm wide and 20 mm long,
+// that ends in a second pair of large triangles. The step is a sliver that
+// touches the first needle of the fan.
+func stepped(t *testing.T) *solidlens.Mesh {
+	t.Helper()
+	const strips = 250
+	const width = 0.02
+	const height = 3e-3
+	var vertices []solidlens.Vec
+	var triangles [][3]int
+	addColumn := func(x, z float64) int {
+		vertices = append(vertices, solidlens.Vec{X: x, Y: -10, Z: z}, solidlens.Vec{X: x, Y: 10, Z: z})
+		return len(vertices) - 2
+	}
+	addQuad := func(left, right int) {
+		triangles = append(triangles, [3]int{left, right, right + 1}, [3]int{left, right + 1, left + 1})
+	}
+	plate := addColumn(-10, 0)
+	foot := addColumn(0, 0)
+	addQuad(plate, foot)
+	previous := addColumn(1e-3, height)
+	addQuad(foot, previous)
+	for i := 1; i <= strips; i++ {
+		next := addColumn(1e-3+float64(i)*width, height)
+		addQuad(previous, next)
+		previous = next
+	}
+	far := addColumn(10, height)
+	addQuad(previous, far)
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+func TestEdgesToleranceHidesStepBesideFanOfNarrowFacets(t *testing.T) {
+	t.Parallel()
+
+	scene := solidlens.Scene{
+		Camera: solidlens.Camera{Position: solidlens.Vec{Z: 60}, Up: solidlens.Vec{Y: 1}},
+		Models: []solidlens.Model{{
+			Mesh:     stepped(t),
+			Material: solidlens.Matte(solidlens.RGB(0.9, 0.9, 0.9)),
+			Edges:    solidlens.Edges{Enabled: true, Color: solidlens.RGB(1, 0, 0)},
+		}},
+		DirectionalLights: []solidlens.DirectionalLight{{
+			Direction: solidlens.Vec{Z: -1}, Color: solidlens.RGB(1, 1, 1), Intensity: 1,
+		}},
+		Background: solidlens.RGB(0, 0, 0.5),
+	}
+	img, err := solidlens.Render(t.Context(), scene, solidlens.Settings{Width: 600, Height: 600})
+	require.NoError(t, err)
+
+	// The image is 12 pixels to the millimetre, so the step sits at column
+	// 300. The window covers it and the first four millimetres of the fan.
+	count := 0
+	for y := 240; y < 360; y++ {
+		for x := 280; x < 348; x++ {
+			if redPixel(img.RGBAAt(x, y)) {
+				count++
+			}
+		}
+	}
+	require.Zero(t, count)
+}
+
 func TestEdgesTolerance(t *testing.T) {
 	t.Parallel()
 
