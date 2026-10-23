@@ -894,3 +894,66 @@ type plainSource struct {
 
 func (s plainSource) Vertices() []solidlens.Vec { return s.vertices }
 func (s plainSource) Triangles() [][3]int       { return s.triangles }
+
+// cubeWithCollinearSliver returns the cube with a vertex on the diagonal of its top face. A triangle of zero
+// area joins the two halves of the diagonal, so the mesh stays closed although that triangle has no normal.
+func cubeWithCollinearSliver(t *testing.T) *solidlens.Mesh {
+	t.Helper()
+	const h = 10
+	vertices := []solidlens.Vec{
+		{X: -h, Y: -h, Z: -h}, {X: h, Y: -h, Z: -h}, {X: h, Y: h, Z: -h}, {X: -h, Y: h, Z: -h},
+		{X: -h, Y: -h, Z: h}, {X: h, Y: -h, Z: h}, {X: h, Y: h, Z: h}, {X: -h, Y: h, Z: h},
+		{X: 0, Y: 0, Z: h},
+	}
+	triangles := [][3]int{
+		{0, 2, 1}, {0, 3, 2},
+		{4, 5, 8}, {5, 6, 8}, {4, 8, 6}, {4, 6, 7},
+		{0, 1, 5}, {0, 5, 4},
+		{1, 2, 6}, {1, 6, 5},
+		{2, 3, 7}, {2, 7, 6},
+		{3, 0, 4}, {3, 4, 7},
+	}
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+// unwelded returns the mesh with a private copy of every vertex per triangle, as an STL file stores it.
+func unwelded(t *testing.T, source solidlens.TriangleSource) *solidlens.Mesh {
+	t.Helper()
+	var vertices []solidlens.Vec
+	var triangles [][3]int
+	for _, triangle := range source.Triangles() {
+		var copied [3]int
+		for i, index := range triangle {
+			copied[i] = len(vertices)
+			vertices = append(vertices, source.Vertices()[index])
+		}
+		triangles = append(triangles, copied)
+	}
+	mesh, err := solidlens.NewMesh(vertices, triangles)
+	require.NoError(t, err)
+	return mesh
+}
+
+func TestEdgesShareEdgesOfClosedMesh(t *testing.T) {
+	settings := solidlens.Settings{Width: 200, Height: 200}
+	render := func(t *testing.T, mesh *solidlens.Mesh) int {
+		t.Helper()
+		scene := cubeScene(t, solidlens.Outline(solidlens.RGB(1, 0, 0)))
+		scene.Models[0].Mesh = mesh
+		img, err := solidlens.Render(t.Context(), scene, settings)
+		require.NoError(t, err)
+		return countRed(img)
+	}
+	want := render(t, cubeMesh(t, 20))
+	require.Positive(t, want)
+
+	t.Run("a triangle of zero area leaves no border edge", func(t *testing.T) {
+		require.Equal(t, want, render(t, cubeWithCollinearSliver(t)))
+	})
+
+	t.Run("repeated vertex positions still share edges", func(t *testing.T) {
+		require.Equal(t, want, render(t, unwelded(t, cubeMesh(t, 20))))
+	})
+}
