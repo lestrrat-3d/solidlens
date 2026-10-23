@@ -69,20 +69,22 @@ func (e Edges) normalized() (Edges, error) {
 	return e, nil
 }
 
-// weldScale quantizes vertex positions to ten nanometres so that meshes which
-// repeat a position per triangle, as STL files do, still share edges.
-const weldScale = 1e5
-
 type weldedVec struct {
-	x, y, z float64
+	x, y, z uint64
 }
 
+// weld identifies a vertex by the exact bits of its position. A mesh that repeats a position per triangle, as
+// STL files do, still shares edges, while two vertices a sliver apart stay distinct.
 func weld(v Vec) weldedVec {
-	return weldedVec{
-		x: math.Round(v.X * weldScale),
-		y: math.Round(v.Y * weldScale),
-		z: math.Round(v.Z * weldScale),
+	return weldedVec{x: weldBits(v.X), y: weldBits(v.Y), z: weldBits(v.Z)}
+}
+
+// weldBits returns the bits of x, with negative zero equal to zero.
+func weldBits(x float64) uint64 {
+	if x == 0 {
+		return 0
 	}
+	return math.Float64bits(x)
 }
 
 type edgeKey struct {
@@ -406,6 +408,60 @@ func sliverGroups(slivers []int, heights []float64, normals []Vec, tolerance, sm
 	return groupOf, count
 }
 
+// fillDegenerateNormals gives a triangle too thin to have a normal the normal of a neighbour across one of its
+// edges. Skipping such a triangle would leave its neighbours with a border edge where the mesh is closed, and
+// a border edge is always drawn. A triangle with no neighbour that has a normal keeps none and is skipped.
+func fillDegenerateNormals(triangles [][3]int, vertexIDs []int, normals []Vec) []Vec {
+	var missing []int
+	for index, normal := range normals {
+		if normal == (Vec{}) {
+			missing = append(missing, index)
+		}
+	}
+	if len(missing) == 0 {
+		return normals
+	}
+	filled := append([]Vec(nil), normals...)
+	owners := make(map[edgeKey][]int, len(triangles)*3/2)
+	for index, triangle := range triangles {
+		for i := range triangle {
+			key := newEdgeKey(vertexIDs[triangle[i]], vertexIDs[triangle[(i+1)%3]])
+			owners[key] = append(owners[key], index)
+		}
+	}
+	// A run of slivers takes its normal from the first solid triangle it touches, one step per pass.
+	for pass := 0; pass < 8 && len(missing) > 0; pass++ {
+		var next []int
+		resolved := make(map[int]Vec)
+		for _, index := range missing {
+			triangle := triangles[index]
+			var found Vec
+			for i := range triangle {
+				key := newEdgeKey(vertexIDs[triangle[i]], vertexIDs[triangle[(i+1)%3]])
+				for _, other := range owners[key] {
+					if other != index && filled[other] != (Vec{}) {
+						found = filled[other]
+						break
+					}
+				}
+				if found != (Vec{}) {
+					break
+				}
+			}
+			if found == (Vec{}) {
+				next = append(next, index)
+				continue
+			}
+			resolved[index] = found
+		}
+		for index, normal := range resolved {
+			filled[index] = normal
+		}
+		missing = next
+	}
+	return filled
+}
+
 // buildEdgeRecords collects the edges of a mesh. A positive tolerance applies
 // Edges.Tolerance.
 func buildEdgeRecords(vertices []Vec, triangles [][3]int, normals []Vec, tolerance, smoothCos float64) []edgeRecord {
@@ -422,6 +478,7 @@ func buildEdgeRecords(vertices []Vec, triangles [][3]int, normals []Vec, toleran
 		}
 		vertexIDs[index] = id
 	}
+	normals = fillDegenerateNormals(triangles, vertexIDs, normals)
 	records := make(map[edgeKey]int, len(triangles)*3/2)
 	// ordered holds the same records in first-encounter order. Ranging over
 	// records instead would take Go's randomised map order, and overlapping
