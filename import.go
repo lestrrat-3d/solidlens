@@ -108,7 +108,7 @@ func ReadOBJ(r io.Reader) (*Mesh, error) {
 }
 
 func objVertexIndex(field string, count int) (int, error) {
-	value := strings.Split(field, "/")[0]
+	value, _, _ := strings.Cut(field, "/")
 	index, err := strconv.Atoi(value)
 	if err != nil || index == 0 {
 		return 0, fmt.Errorf("invalid vertex index %q", field)
