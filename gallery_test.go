@@ -25,6 +25,18 @@ func TestGalleryImages(t *testing.T) {
 	}
 }
 
+func TestGalleryCutawayImage(t *testing.T) {
+	file, err := os.Open(filepath.Join("docs", "images", "cutaway.png"))
+	require.NoError(t, err)
+	config, format, err := image.DecodeConfig(file)
+	closeErr := file.Close()
+	require.NoError(t, err)
+	require.NoError(t, closeErr)
+	require.Equal(t, "png", format)
+	require.Equal(t, 1440, config.Width)
+	require.Equal(t, 810, config.Height)
+}
+
 func TestGallerySectionImage(t *testing.T) {
 	file, err := os.Open(filepath.Join("docs", "images", "section.png"))
 	require.NoError(t, err)

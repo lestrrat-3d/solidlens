@@ -28,9 +28,12 @@ func (c Color) NRGBA() color.NRGBA {
 }
 
 // Material controls a model's diffuse surface color and ambient contribution.
+// An Unlit material ignores the lights and draws every triangle in Color, so
+// all of its faces read as one flat colour.
 type Material struct {
 	Color   Color
 	Ambient float64
+	Unlit   bool
 }
 
 // Matte returns a diffuse material with a small ambient contribution.
@@ -46,11 +49,15 @@ func (m Material) valid() bool { return finiteColor(m.Color) && finite(m.Ambient
 // is the side its vertices wind counter-clockwise on. BackMaterial, when set,
 // shades the other side, which makes a sheet's orientation visible. A nil
 // BackMaterial shades both sides with Material.
+//
+// Clip, when set, cuts the model open along a plane before it is drawn, so a
+// camera can look into a solid. See ClipPlane.
 type Model struct {
 	Mesh         TriangleSource
 	Material     Material
 	BackMaterial *Material
 	Edges        Edges
+	Clip         *ClipPlane
 }
 
 // Camera describes a perspective camera looking from Position toward Target.

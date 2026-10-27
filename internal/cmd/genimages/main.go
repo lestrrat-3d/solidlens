@@ -32,6 +32,7 @@ func main() {
 		{name: "hero.png", scene: heroScene},
 		{name: "mechanical.png", scene: mechanicalScene},
 		{name: "forms.png", scene: formsScene},
+		{name: "cutaway.png", scene: cutawayScene},
 	} {
 		if err := render.write(); err != nil {
 			fmt.Fprintf(os.Stderr, "render %s: %s\n", render.name, err)

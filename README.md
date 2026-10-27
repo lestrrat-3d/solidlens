@@ -91,6 +91,28 @@ estimate's precision.
 
 ![Two toothed wheels on a plane with their overlap in red](docs/images/section.png)
 
+## Cutaways
+
+Set `Model.Clip` to a `ClipPlane` to cut a model open before it is drawn. The half-space the plane's `Normal` points
+into is removed, so a camera on that side looks into the solid. A closed solid shows the inside of its own surface
+through the cut, and `Cap` shades it: an unlit material draws it as one flat colour, which reads as the solid's cut
+face. `ClipMesh` returns the clipped mesh directly.
+
+```go
+model := solidlens.Model{
+	Mesh:     mesh,
+	Material: solidlens.Matte(color),
+	Clip: &solidlens.ClipPlane{
+		Normal: solidlens.Vec{Y: -1},
+		Cap:    &solidlens.Material{Color: color, Unlit: true},
+	},
+}
+```
+
+<p align="center">
+  <img src="docs/images/cutaway.png" alt="A torus and a cylinder, each cut open along a plane so the flat cut faces show" width="900">
+</p>
+
 ## Gallery
 
 The gallery uses triangle meshes built in Go and rendered with `RenderPNG`.
