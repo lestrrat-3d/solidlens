@@ -62,6 +62,35 @@ sheet's free edges, because those edges border the mesh.
 
 The [examples](examples) package contains a tested end-to-end render.
 
+## Plane sections
+
+`RenderSection` draws how two or more solids meet on a cutting plane. Give a
+`SectionView` the plane (`Origin`, and orthonormal in-plane axes `U` and `V`,
+so a point's plane coordinates are `(p-Origin).U` and `(p-Origin).V`) and one
+`SectionLayer` per solid. A layer holds closed loops of 3D points that lie in
+the plane, such as decad's `Body.SectionOutline` returns: outer loops run
+counter-clockwise seen from the tip of `U x V`, and holes run clockwise.
+
+```go
+img, report, err := solidlens.RenderSection(ctx, solidlens.SectionView{
+	Plane: solidlens.SectionPlane{U: solidlens.Vec{X: 1}, V: solidlens.Vec{Y: 1}},
+	Layers: []solidlens.SectionLayer{
+		{Name: "gear", Loops: gearLoops, Fill: solidlens.RGBA(0.05, 0.4, 0.95, 0.55), Outline: solidlens.RGB(0.02, 0.2, 0.7)},
+		{Name: "mate", Loops: mateLoops, Fill: solidlens.RGBA(0.95, 0.6, 0.05, 0.55), Outline: solidlens.RGB(0.7, 0.35, 0.02)},
+	},
+})
+```
+
+Where two layers cover the same area the overlap color, red by default, paints
+over both, and edges are anti-aliased by supersampling. The image gets a
+millimetre grid with labels, a scale bar, a legend, and an optional `Caption`.
+The window fits all layers unless `Window` is set. The returned
+`SectionReport` has each layer's exact area, a raster estimate of it, and the
+raster overlap area, along with the pixel and sample sizes that bound the
+estimate's precision.
+
+![Two toothed wheels on a plane with their overlap in red](docs/images/section.png)
+
 ## Gallery
 
 The gallery uses triangle meshes built in Go and rendered with `RenderPNG`.
@@ -76,7 +105,7 @@ its neighbouring faces stay under the default crease angle.
 
 The committed STL and 3MF files in [`docs/models`](docs/models) are the scene
 sources. Run `go run ./internal/cmd/genimages` to regenerate the checked-in
-images from those files. Run `go run ./internal/cmd/genimages --models` only
+images from those files and the section image from its in-code outlines. Run `go run ./internal/cmd/genimages --models` only
 when intentionally rebuilding the model assets.
 
 ## License
