@@ -43,6 +43,19 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if model.Clip != nil {
+			if model.Mesh == nil {
+				return nil, fmt.Errorf("solidlens: model %d has no mesh", modelIndex)
+			}
+			clipped, err := ClipMesh(model.Mesh, *model.Clip)
+			if err != nil {
+				return nil, fmt.Errorf("solidlens: model %d: %w", modelIndex, err)
+			}
+			model.Mesh = clipped
+			if model.Clip.Cap != nil {
+				model.BackMaterial = model.Clip.Cap
+			}
+		}
 		if model.Mesh == nil {
 			return nil, fmt.Errorf("solidlens: model %d has no mesh", modelIndex)
 		}
@@ -572,6 +585,9 @@ func prepareLighting(scene Scene) lighting {
 }
 
 func shadeTriangle(lights lighting, material Material, normal, position Vec) Color {
+	if material.Unlit {
+		return material.Color
+	}
 	intensity := math.Max(0, material.Ambient)
 	for _, light := range lights.directional {
 		intensity += math.Max(0, normal.Dot(light.direction)*light.intensity) * light.luminance
