@@ -25,6 +25,18 @@ func TestGalleryImages(t *testing.T) {
 	}
 }
 
+func TestGallerySectionImage(t *testing.T) {
+	file, err := os.Open(filepath.Join("docs", "images", "section.png"))
+	require.NoError(t, err)
+	config, format, err := image.DecodeConfig(file)
+	closeErr := file.Close()
+	require.NoError(t, err)
+	require.NoError(t, closeErr)
+	require.Equal(t, "png", format)
+	require.Equal(t, 1200, config.Width)
+	require.Equal(t, 800, config.Height)
+}
+
 func TestGalleryModels(t *testing.T) {
 	for _, name := range []string{
 		"hero-stone.stl",

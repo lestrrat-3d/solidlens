@@ -38,6 +38,10 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if err := writeSection(); err != nil {
+		fmt.Fprintf(os.Stderr, "render section.png: %s\n", err)
+		os.Exit(1)
+	}
 }
 
 type galleryRender struct {
