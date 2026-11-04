@@ -62,6 +62,62 @@ sheet's free edges, because those edges border the mesh.
 
 The [examples](examples) package contains a tested end-to-end render.
 
+## Orbit views and turntables
+
+`NewOrbit` takes a set of models and returns an `Orbit`, which frames them and
+turns a view into a `Scene`. A view is a `Yaw` and `Pitch` in degrees plus a
+`Zoom`, so a tool that lets the user drag to rotate only has to change those
+and render again. The camera keeps Z up and the lights follow it, so the face
+being looked at stays lit.
+
+`RenderTurntableGIF` writes a looping GIF of one full turn around the models.
+GitHub shows a GIF inline in a README, but it does not run scripts, so an
+animation is the closest it gets to a 3D view. Set `Turntable.Width`, `Height`,
+`Frames`, `Delay`, `View`, and `Orbit` to change the size, smoothness, speed,
+starting angle, and field of view or background. All are optional.
+
+```go
+var out bytes.Buffer
+err := solidlens.RenderTurntableGIF(ctx, &out, models, solidlens.Turntable{Width: 640, Height: 480})
+```
+
+A GIF holds 256 colours, so the palette is chosen from a sample of the frames
+and shared by all of them. Flat-shaded models keep their look, and a smooth
+gradient may show bands.
+
+## Orbit views and turntables
+
+These pieces are separate, so you can use one without the others.
+
+- `BoundsOf` returns the box around any `TriangleSource`s, with its `Center`
+  and `Radius`.
+- `FitOrbit` takes bounds and returns an `Orbit`, a camera on a sphere around
+  a target. `Orbit` is a plain value. A viewer that rotates on drag changes its
+  `Yaw` and `Pitch`, one that zooms scales `Distance`, and `Orbit.Camera` turns
+  it into the `Camera` for a `Scene`.
+- `CameraLights` returns a key and a fill light placed relative to a camera,
+  so the visible side stays lit as the camera moves. It works with any
+  camera, not only an `Orbit`.
+- `SceneSource` is a numbered list of scenes, one per animation frame. `Scenes`
+  plays a list you built, and `Turntable` turns an `Orbit` once around a base
+  scene, lighting it with `CameraLights` unless the base scene has lights.
+- `RenderGIF` renders any `SceneSource` as a GIF that loops forever. GitHub
+  shows a GIF inline in a README, but it does not run scripts, so an animation
+  is the closest a README gets to a 3D view.
+
+```go
+bounds, _ := solidlens.BoundsOf(mesh)
+turntable := solidlens.Turntable{
+	Base:  solidlens.Scene{Models: models, Background: solidlens.RGB(0.02, 0.02, 0.03)},
+	Orbit: solidlens.FitOrbit(bounds, 0),
+}
+err := solidlens.RenderGIF(ctx, &out, turntable, solidlens.GIFOptions{Width: 640, Height: 480})
+```
+
+A GIF holds 256 colours, so the palette is chosen from a sample of the frames
+and shared by all of them. Flat-shaded models keep their look, and a smooth
+gradient may show bands.
+
 ## Plane sections
 
 `RenderSection` draws how two or more solids meet on a cutting plane. Give a
