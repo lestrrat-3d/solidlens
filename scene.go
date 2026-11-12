@@ -87,10 +87,43 @@ type PointLight struct {
 	Intensity float64
 }
 
-// Scene is a complete renderable scene layer.
+// Line is a world-space polyline drawn over the rendered models, such as a
+// guide from a part's assembled position to its exploded one.
+//
+// Lines are drawn on top of every model and its edges. They are not depth
+// tested, so a line stays fully visible even where a surface is nearer to the
+// camera. Lines are drawn in Scene.Lines order, later ones over earlier ones.
+//
+// Width and Dash are measured in output pixels, not world units, so a line
+// keeps its look and its dash spacing at any distance from the camera.
+// Parts of the line outside the camera's clipping range are not drawn.
+type Line struct {
+	// Points are the polyline's vertices in world space. At least two are
+	// needed.
+	Points []Vec
+	// Color is the line colour. Its alpha channel sets the opacity.
+	Color Color
+	// Width is the line width in pixels. Zero means one pixel.
+	Width float64
+	// Dash is the dash pattern in pixels, alternating the length of a drawn
+	// dash and the length of the gap after it, starting with a dash. An odd
+	// number of entries is repeated to make an even one, so {4} draws 4 pixel
+	// dashes spaced 4 pixels apart. Every entry must be positive and the
+	// entries must add up to at least 0.25. An empty Dash draws a solid line.
+	//
+	// The pattern runs along the whole polyline, starting at its first point,
+	// and carries on around corners. Dashes have round ends, but they are
+	// shortened so that a dash still covers its stated length. A dash shorter
+	// than Width is drawn as a round dot of Width pixels.
+	Dash []float64
+}
+
+// Scene is a complete renderable scene layer. Lines are drawn after every
+// model, see Line.
 type Scene struct {
 	Camera            Camera
 	Models            []Model
+	Lines             []Line
 	DirectionalLights []DirectionalLight
 	PointLights       []PointLight
 	Background        Color
