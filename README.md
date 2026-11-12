@@ -169,6 +169,19 @@ model := solidlens.Model{
   <img src="docs/images/cutaway.png" alt="A torus and a cylinder, each cut open along a plane so the flat cut faces show" width="900">
 </p>
 
+## Guide lines
+
+Set `Scene.Lines` to draw world-space polylines over the render, such as the
+guides in an exploded view. A `Line` carries its `Points`, a `Color`, a `Width`
+in pixels (zero means one pixel) and a `Dash` pattern in pixels. `Dash`
+alternates the length of a dash and of the gap after it, so `{6, 4}` draws
+6 pixel dashes 4 pixels apart. It runs along the whole polyline and carries on
+around corners. An empty `Dash` draws a solid line.
+
+Lines are drawn on top of every model and its edges and are not depth tested,
+so a guide stays visible behind a surface. Width and dash lengths are screen
+pixels, so a line keeps its look at any distance.
+
 ## Gallery
 
 The gallery uses triangle meshes built in Go and rendered with `RenderPNG`.

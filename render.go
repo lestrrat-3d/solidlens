@@ -218,6 +218,9 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 			}
 		}
 	}
+	if err := drawLines(ctx, image, view, scene.Lines); err != nil {
+		return nil, err
+	}
 	return image, nil
 }
 
@@ -439,9 +442,10 @@ func accumulateSegment(canvas *edgeCanvas, depth []float64, v view, s *edgeRecor
 	accumulateLine(canvas, depth, v.projectPoint(a), v.projectPoint(b), width)
 }
 
-// accumulateLine records the coverage of a depth-tested line of the given
-// pixel width. Coverage of the half pixel at the line border is fractional, so
-// diagonals stay readable.
+// accumulateLine records the coverage of a line of the given pixel width. It
+// is depth tested against depth, or not tested at all when depth is nil.
+// Coverage of the half pixel at the line border is fractional, so diagonals
+// stay readable.
 func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, width float64) {
 	if !finite(a.x) || !finite(a.y) || !finite(a.z) || !finite(b.x) || !finite(b.y) || !finite(b.z) {
 		return
@@ -501,7 +505,7 @@ func accumulateLine(canvas *edgeCanvas, depth []float64, a, b screenVertex, widt
 				}
 				if coverage > 0 {
 					inverse := inverseA + position*(inverseB-inverseA)
-					if inverse >= depth[y*stride+x]*(1-edgeDepthBias) {
+					if depth == nil || inverse >= depth[y*stride+x]*(1-edgeDepthBias) {
 						canvas.add(x, y, coverage)
 					}
 				}
