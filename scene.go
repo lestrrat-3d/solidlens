@@ -127,6 +127,9 @@ type Scene struct {
 	DirectionalLights []DirectionalLight
 	PointLights       []PointLight
 	Background        Color
+	// DepthOfField blurs surfaces away from the focal plane. Nil renders
+	// everything sharp.
+	DepthOfField *DepthOfField
 }
 
 // Settings controls the output raster.

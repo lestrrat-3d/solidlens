@@ -43,6 +43,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "render section.png: %s\n", err)
 		os.Exit(1)
 	}
+	if err := writeDepthOfField(); err != nil {
+		fmt.Fprintf(os.Stderr, "render depth of field images: %s\n", err)
+		os.Exit(1)
+	}
 }
 
 type galleryRender struct {

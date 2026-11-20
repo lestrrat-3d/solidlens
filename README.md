@@ -182,6 +182,24 @@ Lines are drawn on top of every model and its edges and are not depth tested,
 so a guide stays visible behind a surface. Width and dash lengths are screen
 pixels, so a line keeps its look at any distance.
 
+## Depth of field
+
+Set `Scene.DepthOfField` to blur everything away from a focal plane. It takes
+a `FocusDistance` from the camera and an `Aperture` diameter, both in scene
+units, and a larger aperture blurs more. Each pixel spreads into a disc, or
+into a regular polygon when `Blades` is between 3 and 16, which gives the
+bokeh shape. `MaxRadius` caps the blur in pixels and defaults to 24. A nil
+`DepthOfField` renders everything sharp.
+
+| Sharp | `FocusDistance: 16, Aperture: 0.7, Blades: 6` |
+| --- | --- |
+| ![Six spheres receding from the camera, all in focus](docs/images/depth-of-field-sharp.png) | ![The same spheres with only the cyan middle sphere sharp and the near and far ones blurred](docs/images/depth-of-field-bokeh.png) |
+
+The blur reads the finished depth buffer, so it cannot show surfaces hidden
+behind a blurred foreground edge. Render time grows with the square of the
+largest blur radius, so lower `MaxRadius` to speed up a heavily blurred
+render.
+
 ## Gallery
 
 The gallery uses triangle meshes built in Go and rendered with `RenderPNG`.
