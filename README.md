@@ -195,6 +195,17 @@ bokeh shape. `MaxRadius` caps the blur in pixels and defaults to 24. A nil
 | --- | --- |
 | ![Six spheres receding from the camera, all in focus](docs/images/depth-of-field-sharp.png) | ![The same spheres with only the cyan middle sphere sharp and the near and far ones blurred](docs/images/depth-of-field-bokeh.png) |
 
+A small bright spot that is out of focus fades into its surroundings, because
+the blur averages it with the dark pixels around it. Set `Highlight` to make
+pixels brighter than `HighlightThreshold` (default 0.8) count for `1+Highlight`
+times as much in that average, so the spot stays visible as a disc or polygon.
+A highlight that lies behind a nearer surface does not glow over it.
+
+![A cyan sphere in focus in front of warm and cool lights, each blurred into a bright hexagon](docs/images/depth-of-field-lights.png)
+
+`bokehLightsScene` in `internal/cmd/genimages/depth_of_field.go` builds this
+render with `Highlight: 80`.
+
 The blur reads the finished depth buffer, so it cannot show surfaces hidden
 behind a blurred foreground edge. Render time grows with the square of the
 largest blur radius, so lower `MaxRadius` to speed up a heavily blurred

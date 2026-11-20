@@ -108,6 +108,42 @@ func TestDepthOfField(t *testing.T) {
 	})
 }
 
+// peakRed returns the largest red value in the image.
+func peakRed(img *image.RGBA) uint8 {
+	var peak uint8
+	for offset := 0; offset < len(img.Pix); offset += 4 {
+		peak = max(peak, img.Pix[offset])
+	}
+	return peak
+}
+
+func TestDepthOfFieldHighlight(t *testing.T) {
+	// A small white square, far out of focus, on a black background.
+	mesh, err := solidlens.NewMesh(
+		[]solidlens.Vec{{X: -0.05, Y: -0.05}, {X: 0.05, Y: -0.05}, {X: 0.05, Y: 0.05}, {X: -0.05, Y: 0.05}},
+		[][3]int{{0, 1, 2}, {0, 2, 3}},
+	)
+	require.NoError(t, err)
+	render := func(highlight float64) *image.RGBA {
+		img, err := solidlens.Render(t.Context(), solidlens.Scene{
+			Camera: solidlens.Camera{Position: solidlens.Vec{Z: 5}, Up: solidlens.Vec{Y: 1}},
+			Models: []solidlens.Model{{
+				Mesh:     mesh,
+				Material: solidlens.Material{Color: solidlens.RGB(1, 1, 1), Unlit: true},
+			}},
+			Background: solidlens.RGB(0, 0, 0),
+			DepthOfField: &solidlens.DepthOfField{
+				FocusDistance: 20, Aperture: 1, Blades: 6, Highlight: highlight,
+			},
+		}, solidlens.Settings{Width: 160, Height: 120})
+		require.NoError(t, err)
+		return img
+	}
+	plain, boosted := render(0), render(100)
+	require.Less(t, int(peakRed(plain)), 64)
+	require.Greater(t, int(peakRed(boosted)), 128)
+}
+
 func TestDepthOfFieldRejectsInvalidLens(t *testing.T) {
 	tests := map[string]solidlens.DepthOfField{
 		"zero focus distance":     {Aperture: 1},
@@ -120,6 +156,11 @@ func TestDepthOfFieldRejectsInvalidLens(t *testing.T) {
 		"negative blades":         {FocusDistance: 5, Aperture: 1, Blades: -3},
 		"negative radius":         {FocusDistance: 5, Aperture: 1, MaxRadius: -1},
 		"radius over limit":       {FocusDistance: 5, Aperture: 1, MaxRadius: 65},
+		"negative highlight":      {FocusDistance: 5, Aperture: 1, Highlight: -1},
+		"highlight over limit":    {FocusDistance: 5, Aperture: 1, Highlight: 101},
+		"NaN highlight":           {FocusDistance: 5, Aperture: 1, Highlight: math.NaN()},
+		"threshold of one":        {FocusDistance: 5, Aperture: 1, Highlight: 1, HighlightThreshold: 1},
+		"negative threshold":      {FocusDistance: 5, Aperture: 1, Highlight: 1, HighlightThreshold: -0.1},
 	}
 	for name, lens := range tests {
 		t.Run(name, func(t *testing.T) {
