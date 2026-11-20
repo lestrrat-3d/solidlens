@@ -15,6 +15,13 @@ const (
 	largestBlurRadius = 64
 	smallestBlades    = 3
 	largestBlades     = 16
+	largestHighlight  = 100
+	// highlightDepthMargin is the fraction of a pixel's inverse depth below
+	// which a gathered pixel counts as behind it and gets no highlight boost.
+	highlightDepthMargin = 0.9
+	// defaultHighlightThreshold is the brightness above which a pixel counts
+	// as a highlight when HighlightThreshold is zero.
+	defaultHighlightThreshold = 0.8
 	// sharpRadius is the blur radius, in pixels, below which a pixel is
 	// treated as in focus and spreads to no neighbour.
 	sharpRadius = 0.5
@@ -27,8 +34,8 @@ const (
 //
 // The blur works from the depth buffer of the finished render. A surface
 // hidden behind a nearer one is not in that buffer, so a blurred foreground
-// edge does not reveal what is behind it. Nothing in a scene glows, so a
-// blurred highlight is no brighter than the surface it came from.
+// edge does not reveal what is behind it. Nothing in a scene glows, so
+// without Highlight a blurred bright spot fades to the average of its disc.
 type DepthOfField struct {
 	// FocusDistance is the distance from the camera, in the units of the
 	// scene, at which surfaces are sharp. It must be positive.
@@ -42,6 +49,16 @@ type DepthOfField struct {
 	// MaxRadius caps the blur radius in pixels, and bounds the render time,
 	// which grows with its square. It defaults to 24 and may not exceed 64.
 	MaxRadius float64
+	// Highlight makes bright pixels count for more when the blur averages them
+	// with their neighbours, so a small bright spot out of focus stays visible
+	// as a disc or polygon instead of fading. A bright pixel counts for
+	// 1+Highlight times a dark one. Zero turns this off, and it may not exceed
+	// 100.
+	Highlight float64
+	// HighlightThreshold is the brightness, from 0 to 1 and measured on the
+	// final pixel color, above which a pixel is boosted. The boost reaches its
+	// full size at 1. It defaults to 0.8 and must be below 1.
+	HighlightThreshold float64
 }
 
 func (d DepthOfField) normalized() (DepthOfField, error) {
@@ -61,6 +78,16 @@ func (d DepthOfField) normalized() (DepthOfField, error) {
 	if !finite(d.MaxRadius) || d.MaxRadius < 0 || d.MaxRadius > largestBlurRadius {
 		return DepthOfField{}, fmt.Errorf("solidlens: depth of field max radius must be between 0 and %d",
 			largestBlurRadius)
+	}
+	if !finite(d.Highlight) || d.Highlight < 0 || d.Highlight > largestHighlight {
+		return DepthOfField{}, fmt.Errorf("solidlens: depth of field highlight must be between 0 and %d",
+			largestHighlight)
+	}
+	if d.HighlightThreshold == 0 {
+		d.HighlightThreshold = defaultHighlightThreshold
+	}
+	if !finite(d.HighlightThreshold) || d.HighlightThreshold < 0 || d.HighlightThreshold >= 1 {
+		return DepthOfField{}, fmt.Errorf("solidlens: depth of field highlight threshold must be at least 0 and below 1")
 	}
 	return d, nil
 }
@@ -127,8 +154,18 @@ func applyDepthOfField(ctx context.Context, img *image.RGBA, depth []float64, v 
 		return nil
 	}
 	reach := int(math.Floor(widest))
-	source := append([]uint8(nil), img.Pix...)
-	shape := newApertureShape(lens.Blades)
+	plan := blurPlan{
+		source: append([]uint8(nil), img.Pix...),
+		depth:  depth,
+		radii:  radii,
+		shape:  newApertureShape(lens.Blades),
+		width:  width,
+		height: height,
+		reach:  reach,
+	}
+	if lens.Highlight > 0 {
+		plan.boosts = highlightBoosts(plan.source, lens.Highlight, lens.HighlightThreshold)
+	}
 
 	var failed atomic.Bool
 	var next atomic.Int64
@@ -145,7 +182,7 @@ func applyDepthOfField(ctx context.Context, img *image.RGBA, depth []float64, v 
 					return
 				}
 				for x := range width {
-					gatherPixel(img, source, depth, radii, shape, width, height, reach, x, y)
+					plan.gather(img, x, y)
 				}
 			}
 		})
@@ -154,9 +191,37 @@ func applyDepthOfField(ctx context.Context, img *image.RGBA, depth []float64, v 
 	return ctx.Err()
 }
 
-func gatherPixel(
-	img *image.RGBA, source []uint8, depth, radii []float64, shape apertureShape, width, height, reach, x, y int,
-) {
+// blurPlan is the read-only input that every pixel's gather shares.
+type blurPlan struct {
+	source []uint8
+	depth  []float64
+	radii  []float64
+	// boosts is the weight multiplier of each pixel, or nil when highlights
+	// are not boosted.
+	boosts        []float64
+	shape         apertureShape
+	width, height int
+	reach         int
+}
+
+// highlightBoosts returns, for each pixel of the premultiplied source, one
+// plus highlight scaled by how far its brightness is above threshold. The
+// scale rises smoothly from 0 at threshold to 1 at full brightness.
+func highlightBoosts(source []uint8, highlight, threshold float64) []float64 {
+	boosts := make([]float64, len(source)/4)
+	for index := range boosts {
+		offset := index * 4
+		brightness := (0.2126*float64(source[offset]) + 0.7152*float64(source[offset+1]) +
+			0.0722*float64(source[offset+2])) / 255
+		t := min(max((brightness-threshold)/(1-threshold), 0), 1)
+		boosts[index] = 1 + highlight*t*t*(3-2*t)
+	}
+	return boosts
+}
+
+func (p *blurPlan) gather(img *image.RGBA, x, y int) {
+	width, height, reach := p.width, p.height, p.reach
+	source, depth, radii, shape := p.source, p.depth, p.radii, p.shape
 	here := y*width + x
 	hereDepth := depth[here]
 	// A sharp pixel keeps only a little of the blurred background behind it.
@@ -178,6 +243,12 @@ func gatherPixel(
 			weight := 1 / (shape.area * radius * radius)
 			if depth[index] < hereDepth {
 				weight *= behind
+			}
+			// A highlight much farther than the pixel gathering it is not
+			// boosted, so it cannot glow over a nearer surface. The margin keeps
+			// the far side of a curved light boosted for its own near side.
+			if p.boosts != nil && depth[index] >= hereDepth*highlightDepthMargin {
+				weight *= p.boosts[index]
 			}
 			offset := index * 4
 			red += weight * float64(source[offset])

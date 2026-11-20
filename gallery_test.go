@@ -50,7 +50,7 @@ func TestGallerySectionImage(t *testing.T) {
 }
 
 func TestGalleryDepthOfFieldImages(t *testing.T) {
-	for _, name := range []string{"depth-of-field-sharp.png", "depth-of-field-bokeh.png"} {
+	for _, name := range []string{"depth-of-field-sharp.png", "depth-of-field-bokeh.png", "depth-of-field-lights.png"} {
 		file, err := os.Open(filepath.Join("docs", "images", name))
 		require.NoError(t, err)
 		config, format, err := image.DecodeConfig(file)

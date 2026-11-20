@@ -51,20 +51,22 @@ func depthOfFieldScene(lens *solidlens.DepthOfField) solidlens.Scene {
 	}
 }
 
-// writeDepthOfField renders the same scene sharp and with a hexagonal blur.
+// writeDepthOfField renders the depth of field samples for the README.
 func writeDepthOfField() error {
 	for _, render := range []struct {
-		name string
-		lens *solidlens.DepthOfField
+		name  string
+		scene solidlens.Scene
 	}{
-		{name: "depth-of-field-sharp.png"},
-		{name: "depth-of-field-bokeh.png", lens: &solidlens.DepthOfField{FocusDistance: 16, Aperture: 0.7, Blades: 6}},
+		{name: "depth-of-field-sharp.png", scene: depthOfFieldScene(nil)},
+		{name: "depth-of-field-bokeh.png", scene: depthOfFieldScene(
+			&solidlens.DepthOfField{FocusDistance: 16, Aperture: 0.7, Blades: 6})},
+		{name: "depth-of-field-lights.png", scene: bokehLightsScene(80)},
 	} {
 		file, err := os.Create(filepath.Join(outputDir, render.name)) //nolint:gosec
 		if err != nil {
 			return err
 		}
-		err = solidlens.RenderPNG(context.Background(), file, depthOfFieldScene(render.lens),
+		err = solidlens.RenderPNG(context.Background(), file, render.scene,
 			solidlens.Settings{Width: 1200, Height: 675})
 		closeErr := file.Close()
 		if err != nil {
@@ -75,4 +77,29 @@ func writeDepthOfField() error {
 		}
 	}
 	return nil
+}
+
+// bokehLightsScene is a lit sphere in focus in front of a field of small
+// glowing spheres far behind it. Each one blurs into a hexagon.
+func bokehLightsScene(highlight float64) solidlens.Scene {
+	scene := depthOfFieldScene(nil)
+	scene.Models = []solidlens.Model{{
+		Mesh:     sphere(solidlens.Vec{X: -0.6, Y: 4, Z: 1.0}, 1.2, 64, 32),
+		Material: solidlens.Matte(solidlens.RGB(0.2, 0.75, 0.85)),
+	}}
+	warm := []solidlens.Color{
+		solidlens.RGB(1, 0.85, 0.55), solidlens.RGB(1, 0.6, 0.45), solidlens.RGB(0.85, 0.95, 1),
+	}
+	for i := range 28 {
+		// A scattered but repeatable layout.
+		x := -24 + 48*float64((i*37)%28)/27
+		z := -9 + 17*float64((i*11)%28)/27
+		depth := 30 + float64((i*5)%7)*4
+		scene.Models = append(scene.Models, solidlens.Model{
+			Mesh:     sphere(solidlens.Vec{X: x, Y: depth, Z: z}, 0.4, 12, 8),
+			Material: solidlens.Material{Color: warm[i%len(warm)], Unlit: true},
+		})
+	}
+	scene.DepthOfField = &solidlens.DepthOfField{FocusDistance: 12, Aperture: 0.8, Blades: 6, Highlight: highlight}
+	return scene
 }
