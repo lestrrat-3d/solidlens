@@ -51,6 +51,16 @@ is.
 Edges are drawn after every model's surface, so they stay hidden behind
 nearer bodies.
 
+Set `Scene.DepthOfField` to blur everything away from a focal plane. It takes
+a `FocusDistance` from the camera and an `Aperture` diameter, both in scene
+units, and a larger aperture blurs more. Each pixel spreads into a disc, or
+into a regular polygon when `Blades` is between 3 and 16, which gives the
+bokeh shape. `MaxRadius` caps the blur in pixels and defaults to 24. The
+blur reads the finished depth buffer, so it cannot show surfaces hidden
+behind a blurred foreground edge. Render time grows with the square of the
+largest blur radius, so lower `MaxRadius` to speed up a heavily blurred
+render. A nil `DepthOfField` renders everything sharp.
+
 Open meshes render with both sides lit. A decad sheet body, the result of
 `WithSurfaceResult`, tessellates to such a mesh, and passing its `*decad.Mesh`
 as `Model.Mesh` shows its inner walls as well as its outer ones. The front of

@@ -31,6 +31,13 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 	if err != nil {
 		return nil, err
 	}
+	var lens DepthOfField
+	if scene.DepthOfField != nil {
+		lens, err = scene.DepthOfField.normalized()
+		if err != nil {
+			return nil, err
+		}
+	}
 	image := image.NewRGBA(image.Rect(0, 0, settings.Width, settings.Height))
 	fill(image, scene.Background.NRGBA())
 	// depth holds the inverse of the camera-space depth, which varies linearly
@@ -218,6 +225,12 @@ func Render(ctx context.Context, scene Scene, settings Settings) (*image.RGBA, e
 			}
 		}
 	}
+	if scene.DepthOfField != nil {
+		if err := applyDepthOfField(ctx, image, depth, view, lens); err != nil {
+			return nil, err
+		}
+	}
+	// Lines have no depth, so they are drawn over the blurred image and stay sharp.
 	if err := drawLines(ctx, image, view, scene.Lines); err != nil {
 		return nil, err
 	}
